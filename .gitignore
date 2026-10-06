@@ -1,0 +1,13 @@
+node_modules/
+.local/
+data/
+test-results/
+*.sqlite*
+*.dsmbak
+*.key
+*.env
+.env*
+!.env.example
+.vercel/
+supabase/.temp/
+.playwright-cli/

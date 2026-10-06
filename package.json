@@ -1,0 +1,28 @@
+{
+  "name": "puramatricula",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "demo": "node scripts/demo.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node scripts/check.mjs",
+    "build": "node scripts/check.mjs",
+    "cloud:init": "node scripts/cloud-init.mjs",
+    "cloud:start": "node scripts/cloud-serve.mjs",
+    "backup": "node scripts/backup.mjs",
+    "restore": "node scripts/restore.mjs"
+  },
+  "dependencies": {
+    "pdfkit": "0.17.2",
+    "pg": "8.23.1",
+    "read-excel-file": "9.3.10"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8"
+  }
+}
