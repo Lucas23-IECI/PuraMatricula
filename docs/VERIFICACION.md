@@ -91,3 +91,11 @@ Pruebas con SQLite y PostgreSQL PGlite, API HTTP real, 400 fichas base y dos car
 En el proyecto Supabase PuraMatricula se importaron 400 filas ficticias en unos 6,5 segundos usando inserciones por lotes. Se comprobó reapertura, conflicto de revisión, PDF, adjunto cifrado, respaldo/restauración y cadena de auditoría. Las 12 tablas tienen RLS; anon/authenticated no pueden usar el esquema matricula. La conexión valida la CA oficial de Supabase y utiliza un rol runtime limitado.
 
 QA de navegador por terminal en modo headless: carga de XLSX real, confirmación explícita del curso faltante, importación de tres estudiantes, bloqueo de duplicados y vista móvil 390 px sin desborde horizontal. Capturas y respaldos permanecen ignorados en .local. No se cargaron estudiantes reales. Vercel se verificó después de configurar sus variables privadas: login, permisos por curso, campos/adjuntos reservados, conflicto200/409, Excel, PDF, respaldo y persistencia tras volver a entrar. La base cloud contiene 403 expedientes ficticios. Las 42 pruebas automatizadas locales pasan.
+
+## Contraseñas y espera en pantalla
+
+`tests/browser/loading-controls.js` comprueba el ojo con mouse y teclado en acceso, cuentas y respaldo; los skeletons de recarga, expedientes, paginación, ficha, cuentas, auditoría e importación; y los indicadores de acceso, guardado y PDF. Retiene respuestas HTTP para comprobar la espera, simula fallos para verificar el reintento y evita que respuestas anteriores sustituyan la pantalla actual. Verifica 320/390 px, colores del tema oscuro y movimiento reducido. Solo admite la demo local y usa datos ficticios; las capturas quedan en `.local/`.
+
+```powershell
+npx --yes --package @playwright/cli@0.1.22 playwright-cli -s=matricula-local run-code --filename tests/browser/loading-controls.js
+```
