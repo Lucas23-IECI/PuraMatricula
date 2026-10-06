@@ -37,7 +37,7 @@ export async function createApp({directory=join(root,'.local','manual'),demo=fal
       url=new URL(req.url,expectedOrigin);const path=url.pathname,method=req.method;
       if(path==='/api/health'){send({ok:true,application:'matricula',demo});return;}
       if(path==='/api/login'&&method==='POST'){
-        const input=await jsonBody(req);const username=String(input.username||'').toLowerCase().trim(),key=digest(req.socket.remoteAddress||'unknown');const count=attempts.get(key);if(store.loginAllowed?!(await store.loginAllowed(key)):(count&&count.until>Date.now()&&count.count>=10))fail(429,'Espere 10 minutos antes de volver a intentar.');
+        const input=await jsonBody(req);const username=String(input.username||'').toLowerCase().trim(),address=secure&&process.env.VERCEL==='1'?String(req.headers['x-forwarded-for']||'').split(',')[0].trim():'';const key=digest(address||req.socket.remoteAddress||'unknown');const count=attempts.get(key);if(store.loginAllowed?!(await store.loginAllowed(key)):(count&&count.until>Date.now()&&count.count>=10))fail(429,'Espere 10 minutos antes de volver a intentar.');
         const row=await store.db.prepare('SELECT * FROM users WHERE username=? AND active=1').get(username);if(typeof input.password!=='string'||input.password.length>200||!checkPassword(input.password,row?.password||dummyPassword)){
           if(store.loginFailed) await store.loginFailed(key); else attempts.set(key,{count:(count?.until>Date.now()?count.count:0)+1,until:Date.now()+600000});await store.audit('anonymous','login.failed','',{});fail(401,'Usuario o contraseña incorrectos.');
         }

@@ -1,6 +1,6 @@
 # PuraMatrícula: ejecución local y nube
 
-Guía de ejecución independiente. El 5 de octubre se creó y comprobó el esquema privado en Supabase con 400 estudiantes ficticios, TLS verificado, conflicto 409, PDF, adjuntos cifrados y respaldo restaurado. Vercel todavía requiere sus variables privadas y la comprobación del login publicado. La aceptación escolar sigue pendiente.
+Guía de ejecución independiente. El 5 de octubre se creó y comprobó el esquema privado en Supabase con 400 estudiantes ficticios, TLS verificado, conflicto 409, PDF, adjuntos cifrados y respaldo restaurado. Vercel ya tiene las variables privadas y el login publicado fue comprobado. La aceptación escolar sigue pendiente.
 
 ## Requisitos y modo local
 
@@ -45,7 +45,7 @@ npm run cloud:init
 Remove-Item Env:MATRICULA_INITIAL_PASSWORD
 ```
 
-El arranque cloud se realiza mediante `api/index.mjs`; `vercel.json` incluye la función y las reescrituras `/api/*`. El handler no abre un puerto y acepta el store PostgreSQL inyectado. Configura `MATRICULA_ORIGIN` con el dominio de producción y agrega previews a `MATRICULA_ALLOWED_HOSTS` sólo mientras se prueban. No se ha afirmado aquí que el dominio exista o que Vercel esté desplegado.
+El arranque cloud se realiza mediante `api/index.mjs`; `vercel.json` incluye la función y las reescrituras `/api/*`. El handler no abre un puerto y acepta el store PostgreSQL inyectado. Configura `MATRICULA_ORIGIN` con el dominio de producción y agrega previews a `MATRICULA_ALLOWED_HOSTS` sólo mientras se prueban. La instancia de pruebas https://puramatricula.vercel.app está desplegada y conectada a Supabase.
 
 ## Carga del padrón
 
@@ -69,7 +69,7 @@ La restauración verifica integridad SQLite, auditoría, descifrado de fichas y 
 
 ## Límites de esta verificación
 
-Las pruebas locales reproducibles usan datos sintéticos y SQLite; también existe una suite PGlite para revisar el contrato PostgreSQL. Se comprobaron migración, rol limitado, certificado y persistencia del proyecto Supabase elegido. Quedan la configuración de variables privadas en Vercel, el login publicado y la aceptación presencial del colegio. Los secretos sólo pueden existir en el administrador de variables del servicio o en un archivo local ignorado por Git.
+Las pruebas locales reproducibles usan datos sintéticos y SQLite; también existe una suite PGlite para revisar el contrato PostgreSQL. Se comprobaron migración, rol limitado, certificado y persistencia del proyecto Supabase elegido. Se verificaron también variables privadas, login, permisos y persistencia en Vercel. Queda la aceptación presencial del colegio antes de operar con datos reales. Los secretos sólo pueden existir en el administrador de variables del servicio o en un archivo local ignorado por Git.
 
 ## Configuración de este proyecto desde terminal
 
@@ -80,3 +80,9 @@ node --env-file=.local/cloud.env scripts/configure-vercel.mjs
 ```
 
 El archivo `.local/cloud.env` es privado e ignorado por Git. El script pasa los valores por stdin y sólo imprime los nombres de las variables. La cuenta inicial y su contraseña se conservan en `.local/ACCESO-PRUEBAS.txt`; no se publican ni se usan cuentas conocidas de demo en Supabase.
+
+## Verificación del sitio publicado
+
+En https://puramatricula.vercel.app se comprobaron login 200 con cookie Secure, credenciales inválidas 401, acceso por curso y antecedentes reservados 403, conflictos 200/409, PDF, subida/descarga de copia firmada, Excel real con tres filas, rechazo de duplicados, respaldo DSMBACK2 y persistencia al cerrar y abrir sesión. La auditoría conservó su integridad. La base contiene 403 expedientes ficticios de pruebas; no se cargó un padrón real.
+
+`.gitignore` y `.vercelignore` excluyen claves, archivos privados y bases locales. Las variables de producción se configuraron como sensibles mediante stdin. El límite de intentos de login usa la IP reenviada por Vercel en ese entorno y la IP del socket local fuera de él.

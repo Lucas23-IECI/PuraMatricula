@@ -4,7 +4,7 @@ Aplicación independiente de matrícula con ejecución local y despliegue Vercel
 
 ## Vercel y Supabase
 
-La aplicación ya incluye un handler `api/index.mjs`, una migración PostgreSQL versionada y un adaptador asíncrono compatible con SQLite/PostgreSQL. La configuración de Vercel y Supabase es una etapa separada: [docs/CLOUD.md](docs/CLOUD.md) enumera variables privadas, migración, límites de adjuntos, importación del padrón, respaldos y restauración. No se debe interpretar este repositorio como evidencia de un despliegue live; primero hay que configurar y probar una instancia sintética aislada.
+La aplicación ya incluye un handler `api/index.mjs`, una migración PostgreSQL versionada y un adaptador asíncrono compatible con SQLite/PostgreSQL. La instancia de pruebas está publicada en [puramatricula.vercel.app](https://puramatricula.vercel.app) con Supabase privado. Se verificaron login, guardado persistente, permisos, Excel, PDF, adjuntos y respaldo con estudiantes ficticios. [docs/CLOUD.md](docs/CLOUD.md) documenta configuración, límites y pruebas. Las cuentas de nube usan contraseñas privadas; las cuentas demo descritas abajo son exclusivamente locales.
 
 ## Demostración local
 
