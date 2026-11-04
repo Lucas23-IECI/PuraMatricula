@@ -3,10 +3,16 @@ import assert from 'node:assert/strict';
 import {
   normalizeDate,
   normalizeRutAndDv,
+  normalizeCourseName,
   normalizeSchoolWorkbook,
   normalizeStudentRow,
   validateRut
 } from '../src/school-import.mjs';
+
+test('permite elegir la fila de encabezados de un formato nuevo sin confundir el título',()=>{
+  const result=normalizeSchoolWorkbook({Listado:[['Título informativo'],[],['Persona','Apellido','Documento'],['Alumno ficticio','Sintético','11111111-1']]},{year:2026,columnMapping:{names:'Persona',surname:'Apellido',identifier:'Documento'},sheetMappings:{Listado:{include:true,headerRow:3,courseName:'Kínder'}}});
+  assert.equal(result.rows.length,1);assert.equal(result.rows[0].rowNumber,4);assert.equal(result.sheetSummaries[0].headerRow,3);assert.equal(result.errors.length,0);
+});
 
 const headers = [
   'ID de Usuario (no modificar)', 'RUT', 'DV', 'Tipo de documento', 'País emisor',
@@ -88,10 +94,132 @@ test('acepta el padrón administrativo exportado y lo convierte si Usuarios no e
     ]
   }, { year: 2026 });
   assert.equal(result.administrativeRows.length, 2);
-  assert.equal(result.rows.length, 2);
+  assert.equal(result.rows.length, 1);
   assert.equal(result.rows[0].identity.value, '11111111-1');
   assert.equal(result.rows[0].data.surname, 'Alex');
   assert.equal(result.rows[0].data.secondSurname, 'Gómez');
+});
+
+const courseHeaders = ['N°', 'Apellido Paterno (Estudiante)', 'Apellido Materno (Estudiante)', 'Nombres (Estudiante)', 'RUT (Estudiante)',
+  'Apellido Paterno (APODERADO)', 'Apellido Materno (APODERADO)', 'Nombres (Apoderado)', 'RUT (Apoderado)', 'Contacto (Teléfono)', 'Contacto (Email) SOLO SI REGISTRÓ', 'DOMICILIO', 'COMUNA'];
+const courseStudent = (run = '11111111-1') => [1, 'Pérez', 'Soto', 'Ana sintética', run, 'Tutor', 'Prueba', 'Marta', '11111112-9', '+56912340000', 'tutor@example.test', 'Domicilio ficticio', 'Comuna ficticia'];
+
+test('lee catorce hojas por curso sin inventar sección ni perder filas sin numeración', () => {
+  const names = ['PRE-KINDER', 'KINDER', '1ºBásico', '2° Básico', '3°Básico', '4°Básico', '5° Básico', '6°Básico', '7°Básico', '8°Básico', '1° Medio', '2°Medio', '3°Medio', '4°Medio'];
+  const check = body => { let sum=0,m=2;for(const digit of [...String(body)].reverse()){sum+=Number(digit)*m;m=m===7?2:m+1;}const v=11-sum%11;return v===11?'0':v===10?'K':String(v); };
+  const book = Object.fromEntries(names.map((name,index) => {
+    const body=15000000+index,row=courseStudent(`${body}-${check(body)}`);
+    return [name,index===0?[courseHeaders.slice(1),row.slice(1)]:[courseHeaders,row]];
+  }));
+  const result = normalizeSchoolWorkbook(book,{year:2027});
+  assert.equal(result.rows.length,14);
+  assert.equal(result.errors.length,0);
+  assert.equal(result.sheetSummaries.length,14);
+  assert.equal(result.rows[0].courseName,'Prekínder');
+  assert.equal(result.rows[1].courseName,'Kínder');
+  assert.equal(result.rows[2].courseName,'1° Básico');
+  assert.equal(result.rows[2].section,null);
+  assert.equal(result.rows[0].courseYear,2027);
+  assert.equal(result.rows[0].origin,'MATRICULA_POR_CURSO');
+  assert.equal(result.rows[0].data.guardianName,'Marta Tutor Prueba');
+  assert.equal(result.rows[0].data.sourceGuardianSurname,'Tutor');
+  assert.equal(result.rows[0].data.sourceContactEmail,'tutor@example.test');
+  assert.equal(result.rows[0].data.guardianEmail,undefined);
+  assert.equal(result.rows[0].data.email,undefined);
+  assert.equal(result.rows[0].data.address,undefined);
+  assert.equal(result.rows[0].data.sourceCommune,'Comuna ficticia');
+  assert.ok(result.warnings.some(issue=>issue.code==='CONTACTO_SIN_TITULAR'));
+  assert.ok(result.mappingTargets.some(target=>target.key==='commune'));
+  assert.equal(normalizeCourseName('6ºbasico b'),'6° Básico B');
+});
+
+test('preserva hoja/fila exacta después de títulos, huecos y numeración vacía', () => {
+  const result=normalizeSchoolWorkbook({'1° Básico':[
+    ['Padrón de prueba'],[],courseHeaders,[],[2],courseStudent(),[],courseStudent('11111112-K')
+  ]},{year:2026,contactOwner:'guardian',addressOwner:'student'});
+  assert.deepEqual(result.rows.map(row=>row.rowNumber),[6,8]);
+  assert.equal(result.rows[0].data.sourceRow,'6');
+  assert.equal(result.rows[0].data.sourceSheet,'1° Básico');
+  assert.equal(result.rows[0].data.guardianPhone,'+56912340000');
+  assert.equal(result.rows[0].data.email,undefined);
+  assert.equal(result.rows[0].data.address,'Domicilio ficticio');
+  assert.equal(result.rows[0].data.commune,'Comuna ficticia');
+  assert.equal(result.rows[0].data.guardianAddress,undefined);
+  assert.equal(result.sheetSummaries[0].headerRow,3);
+  assert.equal(result.sheetSummaries[0].ignoredRows,1);
+  assert.equal(result.ignored[0].row,5);
+});
+
+test('mapea columnas distintas por hoja y conserva identidad estable aunque cambie la fila', () => {
+  const book={Lote:[['Persona','Familia','Documento local','Contacto seguro'],['Ana','Pérez','11111111-1','ana@example.test']],
+    Otro:[['Nombre alternativo','Apellido alternativo','ID alternativo'],['Luis','Soto','11111112-K']]};
+  const config={year:2027,columnMapping:{names:'Persona',surname:'Familia',identifier:'Documento local',contactEmail:'Contacto seguro'},
+    sheetMappings:{Lote:{courseName:'2º basico'},Otro:{courseName:'KINDER',columnMapping:{names:'Nombre alternativo',surname:'Apellido alternativo',identifier:'ID alternativo',contactEmail:''}}},contactOwner:'student'};
+  const result=normalizeSchoolWorkbook(book,config);
+  assert.equal(result.errors.length,0);
+  assert.deepEqual(result.rows.map(row=>row.courseName),['2° Básico','Kínder']);
+  assert.equal(result.rows[0].data.email,'ana@example.test');
+  assert.equal(result.rows[0].data.guardianEmail,undefined);
+  const shifted=normalizeSchoolWorkbook({Lote:[['Título'],...book.Lote]},{...config,sheetMappings:{Lote:config.sheetMappings.Lote}});
+  assert.equal(result.rows[0].originId,shifted.rows[0].originId);
+  assert.equal(shifted.rows[0].rowNumber,3);
+});
+
+test('informa hojas desconocidas y exige excluirlas explícitamente; no usa primera hoja como Usuarios', () => {
+  const book={Notas:[['Texto ajeno'],['Nota de prueba']], '1° Básico':[courseHeaders,courseStudent()]};
+  const initial=normalizeSchoolWorkbook(book,{year:2026});
+  assert.ok(initial.errors.some(issue=>issue.code==='HOJA_NO_RECONOCIDA'&&issue.sheet==='Notas'));
+  assert.equal(initial.rows.length,1);
+  const chosen=normalizeSchoolWorkbook(book,{year:2026,sheetMappings:{Notas:{include:false}}});
+  assert.equal(chosen.errors.length,0);
+  assert.equal(chosen.sheetSummaries[0].included,false);
+  assert.ok(chosen.ignored.some(issue=>issue.code==='HOJA_EXCLUIDA'));
+});
+
+test('bloquea RUN inválido, provisionales y duplicado entre hojas sin filtrar el documento en errores', () => {
+  const run='11111111-1';
+  const result=normalizeSchoolWorkbook({'1° Básico':[courseHeaders,courseStudent(run)],'2° Básico':[courseHeaders,courseStudent(run),courseStudent('11111111-0')]},{year:2026});
+  assert.equal(result.rows.length,1);
+  assert.ok(result.errors.some(issue=>issue.code==='RUT_INVALIDO'&&issue.row===3));
+  const duplicate=result.errors.find(issue=>issue.code==='DUPLICADO_IDENTIDAD');
+  assert.equal(duplicate.sheet,'2° Básico');assert.equal(duplicate.firstSheet,'1° Básico');assert.equal(duplicate.firstRow,2);
+  assert.ok(!JSON.stringify(result.errors).includes(run));
+  const provisional=normalizeSchoolWorkbook({Lote:[['Nombre','Familia','Documento','Tipo'],['Ana','Pérez','PENDIENTE','Provisional']]},{columnMapping:{names:'Nombre',surname:'Familia',identifier:'Documento',identifierType:'Tipo'}});
+  assert.equal(provisional.rows.length,0);
+  assert.ok(provisional.errors.some(issue=>issue.code==='RUT_INVALIDO'));
+});
+
+test('admite otro documento solo con tipo explícito y rechaza mappings hacia credenciales', () => {
+  const book={Lote:[['Persona','Familia','Documento','Tipo','Contraseña'],['Ana','Pérez','ABC-FICTICIO','Pasaporte','NO-PERSISTIR']]};
+  const options={columnMapping:{names:'Persona',surname:'Familia',identifier:'Documento',identifierType:'Tipo'}};
+  const good=normalizeSchoolWorkbook(book,options);
+  assert.equal(good.rows[0].data.identifierType,'Pasaporte');
+  assert.ok(!JSON.stringify(good).includes('NO-PERSISTIR'));
+  assert.ok(!good.sheetSummaries[0].headers.includes('Contraseña'));
+  const bad=normalizeSchoolWorkbook(book,{columnMapping:{...options.columnMapping,contactEmail:'Contraseña'}});
+  assert.ok(bad.errors.some(issue=>issue.code==='MAPEO_COLUMNA_INVALIDO'));
+  assert.ok(!JSON.stringify(bad).includes('NO-PERSISTIR'));
+  const access=normalizeSchoolWorkbook({Lote:[['Persona','Familia','Documento','Contraseña temporal','Clave de acceso'],['Ana','Pérez','11111111-1','SECRETO-UNO','SECRETO-DOS']]},{columnMapping:{names:'Persona',surname:'Familia',identifier:'Documento'}});
+  assert.ok(!JSON.stringify(access).includes('SECRETO-'));
+  assert.ok(!access.sheetSummaries[0].headers.some(header=>/Contraseña|Clave/.test(header)));
+});
+
+test('el límite cuenta todas las hojas y filas inválidas e impide un lote parcial', () => {
+  const result=normalizeSchoolWorkbook({'1° Básico':[courseHeaders,courseStudent()],'2° Básico':[courseHeaders,courseStudent('11111112-K'),courseStudent('inválido')]},{maxRows:2});
+  assert.ok(result.errors.some(issue=>issue.code==='LIMITE_FILAS'));
+  assert.equal(result.sheetSummaries.reduce((sum,sheet)=>sum+sheet.studentRows,0),3);
+  assert.equal(result.canImport,false);
+});
+
+test('mezclas Usuarios/por curso requieren selección y hojas administrativas auxiliares no duplican', () => {
+  const book={Usuarios:[['ID de Usuario (no modificar)','Nombres','Apellidos'],['ERP-1','Ana','Pérez']],
+    '1° Básico':[courseHeaders,courseStudent()],
+    Estudiantes:[['ID interno','Estudiante','Documento completo'],['ERP-1','Ana Pérez','11111111-1']]};
+  const mixed=normalizeSchoolWorkbook(book);
+  assert.ok(mixed.errors.some(issue=>issue.code==='FORMATOS_MEZCLADOS'));
+  assert.ok(mixed.ignored.some(issue=>issue.code==='HOJA_AUXILIAR'));
+  const selected=normalizeSchoolWorkbook(book,{sheetMappings:{Usuarios:{include:false},Estudiantes:{include:false}}});
+  assert.equal(selected.rows.length,1);assert.equal(selected.errors.length,0);
 });
 
 test('normaliza fecha serial, RUT y errores de identidad sin nombres', () => {

@@ -99,3 +99,11 @@ QA de navegador por terminal en modo headless: carga de XLSX real, confirmación
 ```powershell
 npx --yes --package @playwright/cli@0.1.22 playwright-cli -s=matricula-local run-code --filename tests/browser/loading-controls.js
 ```
+
+## Importación flexible y evolución de fichas (3 de noviembre de 2026)
+
+Se verificó alta manual, edición, reapertura, comuna y apoderado; lectura de un XLSX sintético de catorce hojas; mapeo de encabezados alternativos; curso existente o creación explícita; titularidad separada de contacto y domicilio; fila/hoja de origen y bloqueo de reimportación. La fila de encabezados puede indicarse explícitamente. Los formatos desconocidos requieren mapear o excluir sus hojas y las mezclas ambiguas no permiten confirmar.
+
+Los tests HTTP prueban preparación explícita e idempotente de los campos de importación y actualización de ficha con conflicto409. SQLite y PostgreSQL PGlite verifican importación, edición y evolución de plantilla, preservación de revisiones y de datos reservados. RUN/tipo no pueden modificarse con permiso de edición básico. La creación de cursos rechaza nombres equivalentes.
+
+`tests/browser/flexible-enrollment.js` usa exclusivamente una demo local sintética nueva y los dos fixtures XLSX ficticios del repositorio. Comprueba el recorrido completo de alta, importación de14alumnos, ajustes de columnas, guardado, actualización de ficha anterior, duplicados y vista móvil. Se inspeccionaron capturas en claro y oscuro,390px y320px. La suite automatizada contiene 67 pruebas. Esta evidencia no acredita instalación en el servidor del colegio ni autoriza carga de datos reales.

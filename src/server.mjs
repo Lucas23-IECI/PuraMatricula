@@ -11,6 +11,7 @@ import { sections,permissions,permissionLabels } from './fields.mjs';
 import { createFichaPdf } from './pdf.mjs';
 import { createBackup } from './backup.mjs';
 import { createSchoolImport, SchoolImportError } from './school-import-service.mjs';
+import { ensureImportFields,hasImportFields } from './import-fields.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const dummyPassword=hashPassword('unused-'+randomBytes(32).toString('hex'));
 async function jsonBody(req){
@@ -51,17 +52,18 @@ export async function createApp({directory=join(root,'.local','manual'),demo=fal
         if(path==='/api/logout'&&method==='POST'){await store.db.prepare('DELETE FROM sessions WHERE token_hash=?').run(digest(token));res.setHeader('Set-Cookie','matricula_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');await store.audit(user.id,'logout','',{});send({ok:true});return;}
         if(path==='/api/meta'&&method==='GET'){
           const courses=(await store.db.prepare('SELECT * FROM courses ORDER BY year DESC,name').all()).filter(x=>svc.can(user,'read',x.id)||svc.can(user,'enroll',x.id));
-          const templates=(await store.db.prepare('SELECT * FROM templates ORDER BY id DESC').all()).map(t=>({...t,fields:JSON.parse(t.fields).filter(f=>!f.sensitive||svc.can(user,'sensitive')||svc.can(user,'admin'))}));send({courses,templates,sections,permissions,permissionLabels,demo,testEnvironment,maxAttachmentBytes});return;
+          const templateRows=await store.db.prepare('SELECT * FROM templates ORDER BY id DESC').all(),importFieldsReady=hasImportFields(JSON.parse(templateRows[0]?.fields||'[]')),templates=templateRows.map(t=>({...t,fields:JSON.parse(t.fields).filter(f=>!f.sensitive||svc.can(user,'sensitive')||svc.can(user,'admin'))}));send({courses,templates,sections,permissions,permissionLabels,demo,testEnvironment,maxAttachmentBytes,importFieldsReady});return;
         }
         if(path==='/api/courses'&&method==='POST'){send(await svc.createCourse(user,await jsonBody(req)),201);return;}
         if(path==='/api/records'&&method==='GET'){send(await svc.list(user,Object.fromEntries(url.searchParams)));return;}
         if(path==='/api/records'&&method==='POST'){send(await svc.create(user,await jsonBody(req)),201);return;}
-        const match=path.match(/^\/api\/records\/([0-9a-f-]+)(?:\/(actions|renew|attachments|pdf|revisions))?$/);
+        const match=path.match(/^\/api\/records\/([0-9a-f-]+)(?:\/(actions|renew|attachments|pdf|revisions|template))?$/);
         if(match){const [,id,operation]=match;
           if(!operation&&method==='GET'){send(await svc.detail(user,id));return;}
           if(!operation&&method==='PATCH'){send(await svc.patch(user,id,await jsonBody(req)));return;}
           if(operation==='actions'&&method==='POST'){send(await svc.transition(user,id,await jsonBody(req)));return;}
           if(operation==='renew'&&method==='POST'){send(await svc.renew(user,id,await jsonBody(req)),201);return;}
+          if(operation==='template'&&method==='POST'){send(await svc.upgradeTemplate(user,id,await jsonBody(req)));return;}
           if(operation==='attachments'&&method==='POST'){send(await svc.addAttachment(user,id,await jsonBody(req)),201);return;}
           if(operation==='revisions'&&method==='GET'){
             const record=await svc.load(id);svc.requirePermission(user,'read',record.course_id);const revision=await store.db.prepare('SELECT * FROM revisions WHERE record_id=? AND version=?').get(id,Number(url.searchParams.get('version')));if(!revision)fail(404,'Revisión no encontrada.');const snapshot=JSON.parse(store.unseal(revision.snapshot));snapshot.data=svc.filtered(snapshot.data,await svc.fieldsFor(snapshot.templateId),user);await store.audit(user.id,'revision.read',id,{version:revision.version});send({...snapshot,version:revision.version,at:revision.at,actor:revision.actor});return;
@@ -78,6 +80,7 @@ export async function createApp({directory=join(root,'.local','manual'),demo=fal
         if(path==='/api/users'&&method==='GET'){svc.requirePermission(user,'admin');send({users:(await store.db.prepare('SELECT * FROM users ORDER BY name').all()).map(svc.decodeUser)});return;}
         if(path==='/api/users'&&method==='POST'){send(await svc.saveUser(user,await jsonBody(req)),201);return;}
         const userMatch=path.match(/^\/api\/users\/([0-9a-f-]+)$/);if(userMatch&&method==='PUT'){send(await svc.saveUser(user,await jsonBody(req),userMatch[1]));return;}
+        if(path==='/api/templates/prepare-import'&&method==='POST'){svc.requirePermission(user,'admin');const before=await store.db.prepare('SELECT max(id) AS id FROM templates').get();const template=await ensureImportFields(store);if(Number(before.id)!==Number(template.id))await store.audit(user.id,'template.import.prepare',String(template.id),{});send({id:template.id});return;}
         if(path==='/api/templates'&&method==='POST'){send(await svc.createTemplate(user,await jsonBody(req)),201);return;}
         if(path==='/api/import/preview'&&method==='POST'){send(await svc.importPreview(user,await jsonBody(req)));return;}
         if(path==='/api/import/commit'&&method==='POST'){send(await svc.importCommit(user,await jsonBody(req)),201);return;}

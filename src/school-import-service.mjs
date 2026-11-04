@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { parseSchoolWorkbook, normalizeSchoolWorkbook, normalizeHeader } from './school-import.mjs';
+import { parseSchoolWorkbook, normalizeSchoolWorkbook, normalizeHeader, normalizeCourseName } from './school-import.mjs';
 import { hasImportFields, sourceFields } from './import-fields.mjs';
 import { normalizeIdentifier, validateIdentifier } from './fields.mjs';
 
@@ -14,6 +14,7 @@ export class SchoolImportError extends Error {
 
 const asText = value => value === null || value === undefined ? '' : String(value).trim();
 const keyName = value => normalizeHeader(value || '');
+const courseKey = value => keyName(normalizeCourseName(value || ''));
 const unique = values => [...new Set(values.filter(Boolean))];
 
 async function dbGet(store, sql, ...args) { return await store.db.prepare(sql).get(...args); }
@@ -61,10 +62,8 @@ function availableCoursesFromInput(input) {
 }
 
 async function availableCourses(store, input, year) {
-  const fromInput = availableCoursesFromInput(input);
-  if (fromInput) return fromInput.filter(course => course.year === Number(year));
-  if (!store?.db?.prepare) return [];
-  return (await dbAll(store, 'SELECT id,name,year FROM courses WHERE year=? ORDER BY name', Number(year))).map(course => ({ ...course, key: keyName(course.name) }));
+  if (!store?.db?.prepare) return (availableCoursesFromInput(input) || []).filter(course=>course.year===Number(year)).map(course=>({...course,key:courseKey(course.name)}));
+  return (await dbAll(store, 'SELECT id,name,year FROM courses WHERE year=? ORDER BY name', Number(year))).map(course => ({ ...course, key: courseKey(course.name) }));
 }
 
 function courseLabels(row) {
@@ -79,21 +78,25 @@ function courseLabels(row) {
 
 function sourceData(row) {
   const data = row.data || {};
-  return {
+  const result = {
     names: data.names || '', surname: data.surname || '', secondSurname: data.secondSurname || '',
-    identifierType: data.identifierType || 'Otro', identifier: data.identifier || '', birthDate: data.birthDate || null,
+    identifierType: data.identifierType || 'Otro', identifier: data.identifier || '', birthDate: data.birthDate || '',
     email: data.email || '', guardianIdentifier: data.guardianIdentifier || '',
     studentPhone: data.studentPhone ?? data.phone ?? data.telefono ?? '',
     sourceGender: data.sourceGender ?? data.gender ?? '', sourceBarcode: data.sourceBarcode || '',
     sourceCountry: data.sourceCountry ?? row.identity?.country ?? '', sourceIdentifierType: data.sourceIdentifierType ?? row.identity?.documentType ?? ''
   };
+  for (const key of ['guardianName','guardianPhone','guardianEmail','guardianAddress','guardianCommune','address','commune','sourceSheet','sourceRow','sourceGuardianNames','sourceGuardianSurname','sourceGuardianSecondSurname','sourceContactPhone','sourceContactEmail','sourceAddress','sourceCommune']) {
+    if (data[key] !== undefined && data[key] !== null && data[key] !== '') result[key]=data[key];
+  }
+  return result;
 }
 
 function displayName(data) { return [data.names, data.surname, data.secondSurname].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(); }
 
 function stableRows(rows) {
   return rows.map(row => ({
-    rowNumber: row.rowNumber, origin: row.origin || SOURCE, originId: row.originId,
+    rowNumber: row.rowNumber, sourceSheet:row.sourceSheet || '', origin: row.origin || SOURCE, originId: row.originId,
     courseId: row.courseId || null, courseName: row.courseName || '', section: row.section || '', year: Number(row.year || row.courseYear || 0),
     data: sourceData(row)
   }));
@@ -128,6 +131,12 @@ function validateImportData(row, templateFields, svc, user) {
   const allowed = new Set((templateFields || []).map(field => field?.key).filter(Boolean));
   const unknown = allowed.size ? Object.keys(data).filter(key => !allowed.has(key)) : [];
   if (unknown.length) throw new SchoolImportError(`La fila contiene campos no configurados: ${unknown.join(', ')}.`, 'UNKNOWN_IMPORT_FIELDS');
+  for (const [key,value] of Object.entries(data)) {
+    if (value === null || value === undefined) continue;
+    const field=templateFields?.find(field=>field.key===key);
+    if (typeof value!=='string'||value.length>(field?.type==='textarea'?4000:500)) throw new SchoolImportError(`El campo ${key} contiene un valor inválido o demasiado largo.`, 'FIELD_TYPE_INVALID');
+    if (field?.sensitive&&value&&!can(svc,user,'sensitive')) throw new SchoolImportError('Un campo de origen reservado requiere permiso sensible.', 'SENSITIVE_PERMISSION_REQUIRED',403);
+  }
   for (const key of ['names', 'surname']) if (typeof data[key] !== 'string' || !data[key].trim()) throw new SchoolImportError(`El campo ${key} es obligatorio.`, 'IDENTITY_FIELD_REQUIRED');
   for (const key of ['names', 'surname', 'secondSurname', 'identifierType', 'identifier', 'birthDate', 'email', 'guardianIdentifier', 'studentPhone', 'sourceGender', 'sourceBarcode', 'sourceCountry', 'sourceIdentifierType']) {
     if (data[key] !== null && data[key] !== undefined && typeof data[key] !== 'string') throw new SchoolImportError(`El campo ${key} debe ser texto.`, 'FIELD_TYPE_INVALID');
@@ -137,7 +146,7 @@ function validateImportData(row, templateFields, svc, user) {
     const parsed = validShape ? new Date(`${data.birthDate}T00:00:00.000Z`) : null;
     if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== data.birthDate) throw new SchoolImportError('La fecha de nacimiento debe ser una fecha válida en formato AAAA-MM-DD.', 'DATE_INVALID');
   }
-  if (!['RUN', 'IPE', 'Pasaporte', 'Otro', 'Provisional'].includes(data.identifierType)) throw new SchoolImportError('El tipo de identificación no está configurado.', 'IDENTIFIER_TYPE_INVALID');
+  if (!['RUN', 'IPE', 'Pasaporte', 'Otro'].includes(data.identifierType)) throw new SchoolImportError('La importación necesita una identidad verificable; los borradores provisionales se ingresan de forma individual.', 'IDENTIFIER_TYPE_INVALID');
   if (!data.identifier || !String(data.identifier).trim()) throw new SchoolImportError('La identificación del estudiante es obligatoria.', 'IDENTIFIER_REQUIRED');
   if (data.identifierType === 'RUN' && !validateIdentifier('RUN', data.identifier)) throw new SchoolImportError('El RUN no supera la validación de dígito verificador.', 'RUN_INVALID');
   if (data.sourceGender && !can(svc, user, 'sensitive')) throw new SchoolImportError('El género de origen es reservado y requiere permiso sensible.', 'SENSITIVE_PERMISSION_REQUIRED', 403);
@@ -149,12 +158,19 @@ function resolveCourses(rows, courses, mapping = {}) {
   const resolved = [];
   for (const row of rows) {
     const labels = courseLabels(row);
-    const mapped = labels.map(label => mapping[label] || mapping[row.courseName] || mapping[keyName(label)]).find(Boolean);
+    const own=key=>mapping&&typeof mapping==='object'&&Object.hasOwn(mapping,key)?mapping[key]:null;
+    const mapped = row.courseId || labels.map(label => own(label) || own(row.courseName) || own(keyName(label))).find(Boolean);
     let course = mapped ? byId.get(String(mapped)) : null;
-    if (!course) course = labels.map(label => courses.find(item => item.key === keyName(label))).find(Boolean) || null;
+    if (mapped&&!course) {resolved.push({row,course:null,labels,issue:{code:'COURSE_MAPPING_INVALID',message:'El curso elegido no existe en el año seleccionado.'}});continue;}
+    if (!course) {
+      const matches=labels.slice().reverse().map(label=>courses.filter(item=>item.key===courseKey(label))).find(matches=>matches.length)||[];
+      if(matches.length>1){resolved.push({row,course:null,labels,issue:{code:'CURSO_AMBIGUO',message:'Hay cursos con el mismo nombre normalizado; elija un curso explícitamente.'}});continue;}
+      course=matches[0]||null;
+    }
     if (!course) {
       const proposalLabel = labels.at(-1) || row.courseName || '';
-      const proposalKey = `${keyName(proposalLabel)}|${row.courseYear || ''}`;
+      if(!proposalLabel){resolved.push({row,course:null,labels,issue:{code:'CURSO_AUSENTE',message:'Asigne un curso a la hoja antes de importar.'}});continue;}
+      const proposalKey = `${courseKey(proposalLabel)}|${row.courseYear || ''}`;
       if (!proposals.has(proposalKey)) proposals.set(proposalKey, { key: proposalKey, name: proposalLabel, year: Number(row.courseYear || 0), count: 0, sourceNames: labels });
       proposals.get(proposalKey).count += 1;
       resolved.push({ row, course: null, labels, proposalKey });
@@ -226,9 +242,10 @@ export function createSchoolImport(store, svc) {
     if (templateInfo?.error) return { canImport: false, rows: [], errors: [templateInfo.error], warnings: [], coursesToCreate: [], unresolvedCourses: [], summary: { total: 0, errors: 1 } };
     const templateFields = templateInfo?.fields || [];
     const workbook = await decodeWorkbook(input);
+    const parserOptions={year,maxRows:MAX_ROWS,fileName:input.name||input.fileName||'',columnMapping:input.columnMapping,sheetMappings:input.sheetMappings,contactOwner:input.contactOwner,addressOwner:input.addressOwner};
     const parsed = Buffer.isBuffer(workbook) || workbook instanceof Uint8Array || typeof workbook === 'string'
-      ? await parseSchoolWorkbook(workbook, { year, maxRows: MAX_ROWS, fileName: input.name || input.fileName || '' }).catch(error=>{throw new SchoolImportError(error.message,error.code||'XLSX_INVALID');})
-      : normalizeSchoolWorkbook(workbook, { year, maxRows: MAX_ROWS });
+      ? await parseSchoolWorkbook(workbook, parserOptions).catch(error=>{throw new SchoolImportError(error.message,error.code||'XLSX_INVALID');})
+      : normalizeSchoolWorkbook(workbook, parserOptions);
     const courses = await availableCourses(store, input, year);
     const mapped = resolveCourses(parsed.rows, courses, input.courseMapping || {});
     const rows = [];
@@ -237,25 +254,29 @@ export function createSchoolImport(store, svc) {
     for (const item of mapped.resolved) {
       const data = sourceData(item.row);
       const candidate = { ...item.row, year, courseId: item.course?.id || null, data, fields: data, origin: item.row.origin || SOURCE };
-      if (!item.course) errors.push({ row: item.row.rowNumber, code: 'CURSO_NO_RESUELTO', message: `El curso «${item.labels.at(-1) || item.row.courseName}» requiere asignación o creación explícita.`, courseName: item.row.courseName, section: item.row.section });
-      else if (!can(svc, user, 'write', item.course.id)) errors.push({ row: item.row.rowNumber, code: 'COURSE_PERMISSION_DENIED', message: 'La cuenta no tiene permiso de edición para ese curso.', courseId: item.course.id });
-      try { validateImportData(candidate, templateFields, svc, user); } catch (error) { errors.push({ row: item.row.rowNumber, code: error.code || 'DATA_INVALID', message: error.message }); }
+      const location={row:item.row.rowNumber,sheet:item.row.sourceSheet};
+      if(item.issue)errors.push({...location,...item.issue});
+      else if (!item.course) errors.push({ ...location, code: 'CURSO_NO_RESUELTO', message: `El curso «${item.labels.at(-1) || item.row.courseName}» requiere asignación o creación explícita.`, courseName: item.row.courseName, section: item.row.section });
+      else if (!can(svc, user, 'write', item.course.id)) errors.push({ ...location, code: 'COURSE_PERMISSION_DENIED', message: 'La cuenta no tiene permiso de edición para ese curso.', courseId: item.course.id });
+      try { validateImportData(candidate, templateFields, svc, user); } catch (error) { errors.push({ ...location, code: error.code || 'DATA_INVALID', message: error.message }); }
       rows.push(candidate);
     }
     const existing = await existingIdentityMap(store, rows);
     for (const candidate of rows) {
       const keys = identityKeys(store, candidate);
       const duplicate = existing.get(`hash:${keys.hash}`) || (keys.originId && existing.get(`origin:${keys.origin}\u0000${keys.originId}`));
-      if (duplicate) errors.push({ row: candidate.rowNumber, code: 'DUPLICADO_EXISTENTE', message: 'La identidad u origen ya existe en la matrícula; se requiere revisión manual.', studentId: duplicate.id });
+      if (duplicate) errors.push({ row: candidate.rowNumber, sheet:candidate.sourceSheet, code: 'DUPLICADO_EXISTENTE', message: 'La identidad u origen ya existe en la matrícula; se requiere revisión manual.' });
     }
     const coursesToCreate = mapped.proposals.map(({ key, name, year: courseYear, count, sourceNames }) => ({ key, name, year: courseYear || year, count, sourceNames }));
     const hasNonCourseErrors = errors.some(error => error.code !== 'CURSO_NO_RESUELTO');
-    const ticket = hasNonCourseErrors ? null : store?.mac ? store.mac(ticketPayload(year, rows, coursesToCreate)) : ticketPayload(year, rows, coursesToCreate);
+    const ticket = hasNonCourseErrors||!rows.length ? null : store?.mac ? store.mac(ticketPayload(year, rows, coursesToCreate)) : ticketPayload(year, rows, coursesToCreate);
+    const invalidLocations=new Set(errors.filter(error=>error.row).map(error=>`${error.sheet||''}:${error.row}`));
     return {
-      source: SOURCE, fileName: input.name || input.fileName || null, year, courses, rows,
+      source: parsed.source || SOURCE, fileName: input.name || input.fileName || null, year, courses:courses.filter(course=>can(svc,user,'write',course.id)), rows,
+      sheetSummaries:parsed.sheetSummaries||[],mappingTargets:parsed.mappingTargets||[],
       administrativeRows: parsed.administrativeRows || [], coursesToCreate,
       unresolvedCourses: coursesToCreate, errors, warnings, ignored: parsed.ignored || [],
-      summary: { total: rows.length, valid: rows.length - errors.length, errors: errors.length, warnings: warnings.length, unresolvedCourses: coursesToCreate.length },
+      summary: { total: rows.length, valid: errors.some(error=>!error.row)?0:Math.max(0,rows.length-invalidLocations.size), errors: errors.length, warnings: warnings.length, unresolvedCourses: coursesToCreate.length },
       ticket, canImport: rows.length > 0 && !hasNonCourseErrors && errors.length === 0
     };
   };
@@ -292,14 +313,16 @@ export function createSchoolImport(store, svc) {
       const createdCourses = [];
       for (const course of coursesToCreate) {
         if (!course.name || course.name.length > 80 || course.year < 2020 || course.year > 2100) throw new SchoolImportError('Nombre o año de curso inválido.', 'COURSE_INVALID');
-        const existing = await dbGet(store, 'SELECT id FROM courses WHERE year=? AND name=?', course.year, course.name);
+        const matching=(await dbAll(store,'SELECT id,name FROM courses WHERE year=?',course.year)).filter(item=>courseKey(item.name)===courseKey(course.name));
+        if(matching.length>1)throw new SchoolImportError('Hay cursos ambiguos; asigne uno y vuelva a previsualizar.','CURSO_AMBIGUO',409);
+        const existing = matching[0];
         const id = existing?.id || randomUUID();
         if (!existing) {
           await dbRun(store, 'INSERT INTO courses(id,year,name) VALUES(?,?,?)', id, course.year, course.name);
           createdCourses.push({ id, name: course.name, year: course.year });
           await auditInTransaction(store, user.id, 'course.create.import', id, { year: course.year, name: course.name });
         }
-        courseIds.set(`${keyName(course.name)}|${course.year}`, id);
+        courseIds.set(`${courseKey(course.name)}|${course.year}`, id);
       }
       const latestTemplate = await dbGet(store, 'SELECT id FROM templates ORDER BY id DESC LIMIT 1');
       const inserted = [];
@@ -309,8 +332,8 @@ export function createSchoolImport(store, svc) {
         const data = sourceData(inputRow);
         let courseId = inputRow.courseId;
         if (!courseId) {
-          const proposed = coursesToCreate.find(course => keyName(course.name) === keyName(inputRow.courseName) || keyName(course.name) === keyName(`${inputRow.courseName || ''} ${inputRow.section || ''}`));
-          courseId = proposed && courseIds.get(`${keyName(proposed.name)}|${proposed.year}`);
+          const proposed = courseLabels(inputRow).reverse().map(label=>coursesToCreate.find(course=>courseKey(course.name)===courseKey(label))).find(Boolean);
+          courseId = proposed && courseIds.get(`${courseKey(proposed.name)}|${proposed.year}`);
         }
         if (!courseId) throw new SchoolImportError('Una fila no tiene curso resuelto.', 'COURSE_UNRESOLVED');
         if (!can(svc, user, 'write', courseId)) throw new SchoolImportError('La cuenta no tiene acceso a uno de los cursos.', 'COURSE_PERMISSION_DENIED', 403);

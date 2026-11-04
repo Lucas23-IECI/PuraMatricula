@@ -6,7 +6,16 @@ export const sourceFields = Object.freeze([
   { key: 'sourceGender', label: 'Género informado por el padrón ERP', section: 'reservados', type: 'text', sensitive: true },
   { key: 'sourceBarcode', label: 'Código de barra del padrón ERP', section: 'identificacion', type: 'text', sensitive: false },
   { key: 'sourceCountry', label: 'País emisor informado por el padrón ERP', section: 'identificacion', type: 'text', sensitive: false },
-  { key: 'sourceIdentifierType', label: 'Tipo de documento informado por el padrón ERP', section: 'identificacion', type: 'text', sensitive: false }
+  { key: 'sourceIdentifierType', label: 'Tipo de documento informado por el padrón ERP', section: 'identificacion', type: 'text', sensitive: false },
+  { key: 'sourceSheet', label: 'Hoja de origen', section: 'procedencia', type: 'text', sensitive: false },
+  { key: 'sourceRow', label: 'Fila de origen', section: 'procedencia', type: 'text', sensitive: false },
+  { key: 'sourceContactPhone', label: 'Teléfono de contacto de origen', section: 'procedencia', type: 'tel', sensitive: false },
+  { key: 'sourceContactEmail', label: 'Correo de contacto de origen', section: 'procedencia', type: 'email', sensitive: false },
+  { key: 'sourceAddress', label: 'Domicilio de origen', section: 'procedencia', type: 'text', sensitive: false },
+  { key: 'sourceCommune', label: 'Comuna de origen', section: 'procedencia', type: 'text', sensitive: false },
+  { key: 'sourceGuardianNames', label: 'Nombres del apoderado de origen', section: 'procedencia', type: 'text', sensitive: false },
+  { key: 'sourceGuardianSurname', label: 'Apellido paterno del apoderado de origen', section: 'procedencia', type: 'text', sensitive: false },
+  { key: 'sourceGuardianSecondSurname', label: 'Apellido materno del apoderado de origen', section: 'procedencia', type: 'text', sensitive: false }
 ]);
 export const IMPORT_SOURCE_FIELDS = sourceFields;
 
@@ -29,7 +38,7 @@ function parseFields(row) {
 function ensureFromLatest(store, latest) {
   if (!latest) throw new Error('No existe una plantilla base para agregar los campos del padrón ERP.');
   const current = parseFields(latest);
-  if (sourceFields.every((field) => current.some((candidate) => candidate?.key === field.key))) {
+  if ([...baseFields, ...sourceFields].every((field) => current.some((candidate) => candidate?.key === field.key))) {
     return { ...latest, fields: current };
   }
   // Use the canonical base reference, then retain any approved additions from
@@ -59,5 +68,5 @@ export function ensureImportFields(store) {
 
 export function hasImportFields(fields) {
   const list = Array.isArray(fields) ? fields : parseFields(fields);
-  return sourceKeys.size > 0 && [...sourceKeys].every((key) => list.some((field) => field?.key === key));
+  return sourceKeys.size > 0 && [...baseFields,...sourceFields].every((field) => list.some((candidate) => candidate?.key === field.key));
 }

@@ -2,6 +2,16 @@
 
 Aplicación independiente de matrícula con ejecución local y despliegue Vercel/Supabase para pruebas. No utiliza la base, credenciales, API ni servidor de atrasos. Los archivos de referencia y los datos operacionales no pertenecen a Git. Ver [alcance](docs/ALCANCE.md), [mapa de campos](docs/FICHA-Y-NORMATIVA.md), [evidencia](docs/VERIFICACION.md) y [guía local/cloud](docs/CLOUD.md).
 
+El destino operativo es el **servidor del Colegio Domingo Santa María**, inicialmente como aplicación independiente. La integración dentro del sistema escolar es una opción posterior; [guía del servidor](docs/SERVIDOR-COLEGIO.md).
+
+## Alumnos y archivos con formatos distintos
+
+Además del alta y edición individual, la importación reconoce el Excel Usuarios del ERP, padrones administrativos y libros con una hoja por curso. La previsualización permite incluir o excluir hojas, indicar la fila de encabezados, ajustar columnas y elegir cursos existentes. No inventa año ni sección. Hasta 500 estudiantes y 2 MB por lote; bloquea identidades inválidas, duplicados y formatos ambiguos antes de confirmar.
+
+El teléfono, correo, domicilio y comuna de un padrón por curso se conservan como datos de origen. Quien importa decide si corresponden al estudiante o al apoderado. Las columnas de acceso no crean cuentas. Las fichas incluyen comuna y procedencia de la importación.
+
+En una instalación anterior, Administración puede usar **Preparar campos de importación**, en Plantillas o desde el aviso de Importación. Crea una versión nueva sin alterar las fichas existentes. Una persona con edición y gestión de matrícula puede actualizar la plantilla de una ficha desde su expediente; las revisiones anteriores se conservan. Cambiar RUN/tipo requiere gestión o administración en el curso. Nuevos formatos se prueban con fixtures ficticios, sin subir archivos reales a Git o al piloto público.
+
 ## Vercel y Supabase
 
 La aplicación ya incluye un handler `api/index.mjs`, una migración PostgreSQL versionada y un adaptador asíncrono compatible con SQLite/PostgreSQL. La instancia de pruebas está publicada en [puramatricula.vercel.app](https://puramatricula.vercel.app) con Supabase privado. Se verificaron login, guardado persistente, permisos, Excel, PDF, adjuntos y respaldo con estudiantes ficticios. [docs/CLOUD.md](docs/CLOUD.md) documenta configuración, límites y pruebas. Las cuentas de nube usan contraseñas privadas; las cuentas demo descritas abajo son exclusivamente locales.
