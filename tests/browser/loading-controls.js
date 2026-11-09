@@ -37,15 +37,15 @@ async (page) => {
 
   const records=await hold('**/api/records?*');
   await page.getByLabel('Usuario',{exact:true}).fill('demo-secretaria');await password.fill('Demo-matricula-2026!');
-  await page.getByRole('button',{name:'Ingresar',exact:true}).click();await records.received;
+  await page.getByRole('button',{name:'Ingresar',exact:true}).click();await page.locator('.home-shell').waitFor();await page.getByRole('button',{name:'Ver todos los expedientes',exact:true}).click();await records.received;
   await page.locator('#list-table[aria-busy="true"] .skeleton-state').waitFor();
   await records.release();await page.locator('.student-button').first().waitFor();
   check(await page.locator('#list-table').getAttribute('aria-busy')===null,'Lista quedó ocupada');
   await page.setViewportSize({width:1440,height:960});
-  const pagination=await hold('**/api/records?*');await page.getByRole('button',{name:'Siguiente',exact:true}).click();
+  const pagination=await hold('**/api/records?*');await page.locator('[data-pagination="records"]').getByRole('button',{name:'Página siguiente',exact:true}).click();
   await pagination.received;await page.locator('#list-table .skeleton-state').waitFor();
   await page.screenshot({path:'.local/loading-list-desktop.png'});
-  await pagination.release();await page.waitForFunction(()=>document.querySelector('.table-foot')?.textContent.includes('página 2'));
+  await pagination.release();await page.locator('[data-pagination="records"][data-page="2"]').waitFor();
   passed.push('Skeleton de expedientes y paginación');
 
   let releaseOld,oldStarted;const oldGate=new Promise(resolve=>releaseOld=resolve),oldRequest=new Promise(resolve=>oldStarted=resolve);
@@ -62,6 +62,8 @@ async (page) => {
   await page.getByRole('button',{name:'Auditoría',exact:true}).click();await page.getByRole('heading',{name:'Auditoría',exact:true}).waitFor();
   const usersResponse=page.waitForResponse('**/api/users');await users.release();await usersResponse;await settle();
   check(await page.getByRole('heading',{name:'Auditoría',exact:true}).count()===1,'Cuentas tardías reemplazaron otra vista');
+  // Reingresa desde otro módulo: repetir la vista actual ya no recarga los datos.
+  await page.getByRole('button',{name:'Cursos y años',exact:true}).click();await page.getByRole('heading',{name:'Cursos y años',exact:true}).waitFor();
   const audit=await hold('**/api/audit?*');await page.getByRole('button',{name:'Auditoría',exact:true}).click();
   await audit.received;await page.locator('#content .skeleton-state').waitFor();
   await page.getByRole('button',{name:'Cursos y años',exact:true}).click();
@@ -103,7 +105,7 @@ async (page) => {
   passed.push('Ojo de respaldo y ocultación al limpiar');
 
   await page.getByRole('button',{name:'Importación',exact:true}).click();
-  await page.getByLabel('Planilla de estudiantes',{exact:true}).setInputFiles('tests/fixtures/usuarios-sinteticos.xlsx');
+  await page.getByLabel('Planilla de estudiantes',{exact:true}).setInputFiles('.local/xlsx-fixtures/usuarios-sinteticos.xlsx');
   const preview=await hold('**/api/import/school/preview');await page.getByRole('button',{name:'Previsualizar carga',exact:true}).click();
   await preview.received;await page.locator('#import-preview[aria-busy="true"] .skeleton-state').waitFor();
   await page.emulateMedia({reducedMotion:'reduce'});

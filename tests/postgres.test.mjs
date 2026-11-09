@@ -135,9 +135,11 @@ test('Aceptación HTTP con PostgreSQL PGlite, importación escolar y respaldo l�
   });
 
   await t.test('plantilla versionada y renovación anual mantienen separado el año actual', async () => {
-    const latest = await store.db.prepare('SELECT fields FROM templates ORDER BY id DESC LIMIT 1').get();
+    const latest = await store.db.prepare('SELECT id,fields FROM templates ORDER BY id DESC LIMIT 1').get();
     const fields = JSON.parse(latest.fields);
-    const created = await request(admin, '/api/templates', 'POST', { name: 'Versión PostgreSQL sintética', fields: [...fields, { key: 'pgQaQuestion', label: 'Pregunta PostgreSQL QA', section: 'adicionales', type: 'text', sensitive: true }] });
+    const draft={baseTemplateId:Number(latest.id),name:'Versión PostgreSQL sintética',fields:[...fields,{key:'pgQaQuestion',label:'Pregunta PostgreSQL QA',section:'adicionales',type:'text',sensitive:true}]};
+    const preview=await request(admin,'/api/templates/preview','POST',draft);assert.equal(preview.status,200);
+    const created=await request(admin,'/api/templates','POST',{...draft,previewToken:preview.data.previewToken});
     assert.equal(created.status, 201);
     const source = data.records[3];
     assert.equal(futureCourses.length, 8);

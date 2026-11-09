@@ -1,6 +1,7 @@
 import test from 'node:test';
+import {syntheticWorkbook} from './helpers/school-fixtures.mjs';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
+import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve,sep} from 'node:path';
 import {createApp} from '../src/server.mjs';
@@ -16,7 +17,7 @@ test('HTTP prepara campos de importación explícitamente y actualiza una ficha 
     const session=await login.json(),headers={'Content-Type':'application/json',Cookie:login.headers.get('set-cookie').split(';')[0],'X-CSRF-Token':session.csrf};
     const post=async(path,body)=>{const response=await fetch(base+path,{method:'POST',headers,body:JSON.stringify(body)});return {status:response.status,data:await response.json()};};
     assert.equal((await(await fetch(base+'/api/meta',{headers})).json()).importFieldsReady,false);
-    const input={year:2026,name:'sintetico.xlsx',content:readFileSync(new URL('./fixtures/matricula-por-cursos-sintetica.xlsx',import.meta.url)).toString('base64')};
+    const input={year:2026,name:'sintetico.xlsx',content:syntheticWorkbook('matricula-por-cursos-sintetica.xlsx').toString('base64')};
     const missing=await post('/api/import/school/preview',input);assert.equal(missing.data.ticket,undefined);assert.equal(missing.data.errors[0].code,'IMPORT_TEMPLATE_SOURCE_FIELDS_MISSING');
     const prepared=await post('/api/templates/prepare-import',{});assert.equal(prepared.status,200);assert.equal((await post('/api/templates/prepare-import',{})).data.id,prepared.data.id);
     assert.equal((await(await fetch(base+'/api/meta',{headers})).json()).importFieldsReady,true);

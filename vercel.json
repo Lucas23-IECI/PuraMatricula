@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {"deploymentEnabled": {"codex/entrega-colegio": false}},
   "buildCommand": "npm run build",
   "outputDirectory": "public",
   "functions": {"api/index.mjs": {"maxDuration": 300, "includeFiles": "src/**"}},

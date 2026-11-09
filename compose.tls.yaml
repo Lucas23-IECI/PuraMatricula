@@ -1,0 +1,63 @@
+# Complete standalone configuration: use this file instead of compose.yaml.
+name: puramatricula
+services:
+  puramatricula:
+    image: ${MATRICULA_IMAGE:-puramatricula:0.2.0}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    user: "1000:1000"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 30s
+    pids_limit: 128
+    mem_limit: 768m
+    environment:
+      NODE_ENV: production
+      MATRICULA_DATA: /data/matricula
+      MATRICULA_HOST: 0.0.0.0
+      MATRICULA_PORT: ${MATRICULA_TLS_PORT:-4433}
+      MATRICULA_ORIGIN: ${MATRICULA_PUBLIC_ORIGIN:?Defina el origen HTTPS con el puerto TLS publicado}
+      MATRICULA_TRANSPORT: tls
+      MATRICULA_TLS_CERT: /run/certs/server.crt
+      MATRICULA_TLS_KEY: /run/certs/server.key
+    ports:
+      - "${MATRICULA_TLS_BIND:-0.0.0.0}:${MATRICULA_TLS_PORT:-4433}:${MATRICULA_TLS_PORT:-4433}"
+    volumes:
+      - matricula-data:/data
+      - type: bind
+        source: ${MATRICULA_TLS_CERT_FILE:?Indique el certificado PEM propio de Matrícula}
+        target: /run/certs/server.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MATRICULA_TLS_KEY_FILE:?Indique la clave PEM propia de Matrícula}
+        target: /run/certs/server.key
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=67108864,mode=1777
+    networks: [matricula-private]
+    healthcheck:
+      test: [CMD, node, scripts/docker-healthcheck.mjs, --quiet]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+volumes:
+  matricula-data:
+    name: ${MATRICULA_DATA_VOLUME:-puramatricula_data}
+networks:
+  matricula-private:
+    name: ${MATRICULA_NETWORK_NAME:-puramatricula_private}
+    driver: bridge

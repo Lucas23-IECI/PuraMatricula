@@ -1,0 +1,77 @@
+async page=>{
+  if(!['localhost','127.0.0.1'].includes(new URL(page.url()).hostname)||!(await(await page.request.get(new URL('/api/health',page.url()).href)).json()).demo)throw Error('Solo demo sintética local.');
+  page.setDefaultTimeout(12000);
+  const passed=[],check=(ok,text)=>{if(!ok)throw Error(text);},mainHelp=()=>page.getByRole('button',{name:'Ayuda de esta pantalla',exact:true}),modal=()=>page.locator('#dialog');
+  const revealPaged=async(id,target)=>{
+    const pager=page.locator('[data-pagination="'+id+'"]');await pager.waitFor();if(await target.count())return;
+    if(await pager.getAttribute('data-page')!=='1'){await pager.locator('button[data-page="1"]').click();await page.locator('[data-pagination="'+id+'"][data-page="1"]').waitFor();}
+    while(!await target.count()){
+      const next=pager.getByRole('button',{name:'Página siguiente',exact:true});check(await next.isEnabled(),'No se encontró el objetivo en '+id);
+      const expected=Number(await pager.getAttribute('data-page'))+1;await next.click();await page.locator('[data-pagination="'+id+'"][data-page="'+expected+'"]').waitFor();
+    }
+  };
+  const help=async(topic,{form=false,min=1}={})=>{
+    const button=form?modal().getByRole('button',{name:'Ayuda de este formulario',exact:true}):mainHelp();
+    await button.click();const panel=page.locator('#help-dialog');await panel.waitFor({state:'visible'});
+    check(await panel.getAttribute('data-topic')===topic,'Tema incorrecto: '+topic);
+    check(await panel.getByRole('button',{name:'Anterior',exact:true}).isDisabled(),'Anterior habilitado al inicio '+topic);
+    let count=0;const titles=[];
+    while(true){
+      const text=await panel.locator(':scope > p').textContent();check(text.trim().length>35,'Ayuda vacía '+topic);
+      titles.push(await panel.locator('#help-title').textContent());count++;
+      if(await panel.getByRole('button',{name:'Listo',exact:true}).count())break;
+      await panel.getByRole('button',{name:'Siguiente',exact:true}).click();check(count<10,'Ayuda sin fin '+topic);
+    }
+    check(count>=min,'Faltan pasos '+topic);
+    if(count>1){await panel.getByRole('button',{name:'Anterior',exact:true}).click();await panel.getByRole('button',{name:'Siguiente',exact:true}).click();}
+    await panel.getByRole('button',{name:'Listo',exact:true}).click();await panel.waitFor({state:'hidden'});
+    check(await button.evaluate(el=>el===document.activeElement),'No restaura foco '+topic);
+    await button.focus();await page.keyboard.press('Enter');await panel.waitFor({state:'visible'});await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
+    await button.click();await panel.getByRole('button',{name:'Cerrar ayuda',exact:true}).click();await panel.waitFor({state:'hidden'});
+    if(form)check(await modal().isVisible(),'La ayuda cerró el formulario '+topic);
+    passed.push({topic,steps:count});return titles;
+  };
+  const nav=async name=>{await page.getByRole('button',{name,exact:true}).click();};
+  const cancel=async()=>{await modal().getByRole('button',{name:/^(Cancelar|Cerrar)$/}).click();await modal().waitFor({state:'hidden'});};
+  await page.context().clearCookies();await page.reload();await page.getByRole('heading',{name:'Bienvenido/a'}).waitFor();await help('login',{min:2});
+  await page.getByLabel('Usuario',{exact:true}).fill('demo-secretaria');await page.getByLabel('Contraseña',{exact:true}).fill('Demo-matricula-2026!');await page.getByRole('button',{name:'Ingresar',exact:true}).click();await page.locator('.home-shell').waitFor();await page.getByRole('button',{name:'Ver todos los expedientes',exact:true}).click();await page.getByRole('heading',{name:'Expedientes',exact:true}).waitFor();
+  await page.setViewportSize({width:1440,height:960});await help('records',{min:4});
+  await nav('+ Nueva matrícula');await modal().getByLabel('Nombres',{exact:true}).fill('Prueba de ayuda');await help('newRecord',{form:true,min:2});check(await modal().getByLabel('Nombres',{exact:true}).inputValue()==='Prueba de ayuda','Ayuda borró el formulario');
+  await modal().getByLabel('Apellido paterno',{exact:true}).fill('Revisión total');await modal().getByRole('combobox',{name:'Identificación',exact:true}).selectOption('Otro');const identifier='QA-HELP-'+Date.now();await modal().getByLabel('Identificador',{exact:true}).fill(identifier);await modal().locator('button[type="submit"]').click();await page.locator('#field-address').waitFor();
+  await help('record',{min:5});
+  const initialPending=Number((await page.locator('#record-pending').textContent()).match(/\d+/)[0]);
+  await page.locator('#field-guardianName').fill('Apoderado sintético');await page.locator('#field-guardianPhone').fill('Contacto ficticio');
+  for(const value of ['Primera edición de prueba','Segunda edición de prueba']){await page.locator('#field-address').fill(value);await nav('Guardar cambios');await page.waitForFunction(()=>document.querySelector('#save-state')?.textContent.startsWith('Guardado'));}
+  check(Number((await page.locator('#record-pending').textContent()).match(/\d+/)[0])===initialPending-2,'Pendientes no se actualizaron al guardar');
+  await page.getByRole('tab',{name:'Historial',exact:true}).click();await help('history',{min:2});check(await page.getByText(/Revisión 2 ·/).count()>0,'Historial omite revisión intermedia recién guardada');await page.locator('[data-action="revision"][data-version="2"]').click();await help('revision',{form:true});await cancel();
+  await page.getByRole('tab',{name:'Documentos',exact:true}).click();await help('documents',{min:3});await page.getByRole('tab',{name:'Ficha del estudiante',exact:true}).click();
+  await nav('Más descargas');await help('recordDownload',{form:true,min:2});check(await modal().locator('select[name="version"] option[value="2"]').count()===1,'Descargas omiten revisión intermedia');await cancel();
+  await nav('Cambiar curso');await help('transfer',{form:true});await cancel();await nav('Preparar otro año');await help('renew',{form:true});await cancel();
+  await nav('Registrar retiro');await help('withdraw',{form:true});await modal().getByLabel('Motivo',{exact:true}).fill('Retiro sintético para revisar ayuda');await modal().locator('button[type="submit"]').click();await page.getByText('Expediente retirado. Se conserva para consulta e historial.').waitFor();const retired=await help('withdrawn',{min:3});check(!retired.includes('Guarda tus cambios'),'Ayuda retirada ofrece guardar');
+  await page.getByRole('tab',{name:'Documentos',exact:true}).click();check(!(await help('documents',{min:2})).includes('Adjunta un respaldo'),'Ayuda retirada ofrece adjuntar');await page.getByRole('tab',{name:'Ficha del estudiante',exact:true}).click();
+  await nav('Registrar reingreso');await help('reenter',{form:true});await modal().getByLabel('Motivo',{exact:true}).fill('Reingreso sintético de revisión');await modal().locator('button[type="submit"]').click();await page.locator('[data-action="withdraw"]').waitFor();
+  // Otro escritor guarda entre la lectura y el siguiente intento local.
+  await page.evaluate(async identifier=>{const session=await(await fetch('/api/session')).json();const row=await(await fetch('/api/records?year=2026&q='+encodeURIComponent(identifier))).json();const record=await(await fetch('/api/records/'+row.items[0].id)).json();const response=await fetch('/api/records/'+record.id,{method:'PATCH',headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrf},body:JSON.stringify({version:record.version,data:{...record.data,address:'Otro escritor sintético'}})});if(!response.ok)throw Error('No se preparó conflicto');},identifier);
+  await page.locator('#field-address').fill('Texto local del conflicto');await nav('Guardar cambios');await page.getByRole('button',{name:'Guardar copia de mis cambios',exact:true}).waitFor();await help('conflict',{min:2});await nav('Recargar versión guardada');await help('reload',{form:true});await modal().locator('button[type="submit"]').click();
+  await nav('← Volver a expedientes');await nav('Exportar lista');await help('rosterDownload',{form:true,min:2});await cancel();
+  for(const [name,topic,min] of [['Pendientes','pending',3],['Estadísticas','reports',4],['Cursos y años','courses',2],['Cuentas y permisos','users',3],['Plantillas','templates',4],['Importación','import',4],['Auditoría','audit',2],['Respaldo','backup',3]]){await nav(name);await help(topic,{min});}
+  await nav('Cursos y años');await nav('Agregar curso');await help('courseForm',{form:true});await cancel();
+  await nav('Cuentas y permisos');await nav('+ Nueva cuenta');await help('accountForm',{form:true,min:3});await cancel();await revealPaged('users',page.getByRole('row').filter({hasText:'demo-profesor'}));await page.getByRole('row').filter({hasText:'demo-profesor'}).getByRole('button',{name:'Configurar',exact:true}).click();await help('accountForm',{form:true,min:3});await cancel();
+  await nav('Cambiar contraseña');await help('ownPassword',{form:true,min:2});await cancel();
+  await nav('Plantillas');await nav('Añadir pregunta');await help('questionForm',{form:true,min:2});await modal().getByLabel('Pregunta',{exact:true}).fill('Pregunta sintética ayuda');await modal().locator('button[type="submit"]').click();await page.getByRole('button',{name:'Editar',exact:true}).last().click();await help('questionForm',{form:true,min:2});await cancel();await page.locator('#template-name').fill('Revisión ayuda '+Date.now());await nav('Previsualizar versión');await nav('Publicar versión');await page.getByText('Versión publicada. Las fichas anteriores se conservan.',{exact:true}).waitFor();
+  await nav('Expedientes');await page.getByRole('searchbox').fill(identifier);await page.locator('.student-button').first().click();await nav('Actualizar plantilla de esta ficha');await help('upgrade',{form:true});await cancel();await nav('← Volver a expedientes');
+  // Estadísticas: abrir el detalle mantiene estado/curso y la navegación vuelve bien.
+  await nav('Estadísticas');await page.getByRole('heading',{name:'Por curso',exact:true}).waitFor();await page.locator('[data-report-status="enrolled"]').first().click();await page.locator('#report-list-title').waitFor();check(await page.locator('#report-filters select[name="status"]').inputValue()==='enrolled','Estadísticas perdió estado');await nav('Ocultar lista');check(await page.locator('#report-list-title').count()===0,'Ocultar lista no cerró detalle');check(await page.locator('#report-filters select[name="status"]').inputValue()==='enrolled','Ocultar lista perdió filtros');
+  await page.locator('[data-report-course]').first().click();await page.locator('#report-list-title').waitFor();check((await page.locator('#report-filters select[name="course"]').inputValue())!=='','Detalle perdió curso');await page.locator('#report-results [data-action="open"]').first().click();await nav('← Volver a expedientes');check(await page.locator('nav [data-view="records"]').getAttribute('class')==='active','Volver no actualiza navegación');passed.push({topic:'statistics-regression',steps:4});
+  // Las respuestas retenidas no pueden cerrar formularios o reemplazar otro módulo.
+  await nav('Cuentas y permisos');await nav('+ Nueva cuenta');await modal().getByLabel('Nombre',{exact:true}).fill('QA ayuda sin módulos');const username='qa-help-'+Date.now();await modal().getByLabel('Usuario',{exact:true}).fill(username);await modal().getByLabel('Contraseña temporal',{exact:true}).fill('Temporal-ayuda-2026!');await modal().locator('input[name="permissions"]:checked').uncheck();
+  let release,received,finished;const gate=new Promise(r=>release=r),started=new Promise(r=>received=r),completed=new Promise(r=>finished=r);const handler=async route=>{if(route.request().method()!=='POST'){await route.continue();return;}received();await gate;try{await route.continue();}finally{finished();}};await page.route('**/api/users',handler);await modal().locator('button[type="submit"]').click();await started;check(await modal().getByRole('button',{name:'Cancelar',exact:true}).isDisabled(),'Cancelar sigue activo durante envío');await page.keyboard.press('Escape');check(await modal().isVisible(),'Escape cerró envío');await help('accountForm',{form:true,min:3});release();await completed;await page.unroute('**/api/users',handler);await modal().waitFor({state:'hidden'});await revealPaged('users',page.getByText(username,{exact:true}));await page.getByText(username,{exact:true}).waitFor();passed.push({topic:'submission-regression',steps:2});
+  // Ayuda de contraseña temporal y cuenta sin módulos, a 320 px y en oscuro.
+  const context=await page.context().browser().newContext({viewport:{width:320,height:844}});const account=await context.newPage();try{
+    await account.goto(page.url());await account.getByLabel('Usuario',{exact:true}).fill(username);await account.getByLabel('Contraseña',{exact:true}).fill('Temporal-ayuda-2026!');await account.getByRole('button',{name:'Ingresar',exact:true}).click();await account.getByRole('heading',{name:'Cambia tu contraseña temporal'}).waitFor();
+    const button=account.getByRole('button',{name:'Ayuda de esta pantalla',exact:true});await button.click();check(await account.locator('#help-dialog').getAttribute('data-topic')==='password','Ayuda temporal equivocada');await account.keyboard.press('Escape');await account.getByLabel('Contraseña actual',{exact:true}).fill('Temporal-ayuda-2026!');await account.getByLabel('Nueva contraseña',{exact:true}).fill('Personal-ayuda-2026!');await account.getByLabel('Repetir nueva contraseña',{exact:true}).fill('Personal-ayuda-2026!');await account.getByRole('button',{name:'Guardar nueva contraseña',exact:true}).click();await account.getByLabel('Usuario',{exact:true}).fill(username);await account.getByLabel('Contraseña',{exact:true}).fill('Personal-ayuda-2026!');await account.getByRole('button',{name:'Ingresar',exact:true}).click();await account.locator('.home-no-modules').waitFor();check(await account.locator('.home-search-panel').count()===0,'Cuenta sin módulos muestra búsqueda de alumnos');await account.getByRole('button',{name:'Cambiar tema claro u oscuro'}).click();await account.getByRole('button',{name:'Ayuda de esta pantalla',exact:true}).click();check(await account.locator('#help-dialog').getAttribute('data-topic')==='homeEmpty','Ayuda del inicio sin módulos incorrecta');check(await account.locator('#help-dialog').getByRole('heading',{name:'Tu cuenta necesita accesos',exact:true}).count()===1,'Ayuda sin módulos ofrece búsqueda o estadísticas');check(await account.locator('.home-no-modules.help-highlight').count()===1,'Ayuda sin módulos no resalta el mensaje de accesos');check(await account.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Desborde ayuda móvil');await account.screenshot({path:'.local/revision-total-fy76C3/ayuda-sin-modulos-320.png'});await account.keyboard.press('Escape');
+  }finally{await context.close();}
+  passed.push({topic:'password-and-empty',steps:2});
+  await nav('+ Nueva cuenta');await page.setViewportSize({width:320,height:844});await modal().getByRole('button',{name:'Ayuda de este formulario'}).click();check(await page.locator('#help-dialog').evaluate(el=>el.scrollWidth<=el.clientWidth),'Ayuda modal desborda');await page.screenshot({path:'.local/revision-total-fy76C3/ayuda-formulario-320.png'});await page.keyboard.press('Escape');await cancel();await page.setViewportSize({width:1440,height:960});
+  return {passed,contexts:passed.length};
+}

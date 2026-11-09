@@ -1,0 +1,51 @@
+.collection-filter-panel{margin-bottom:20px;padding:20px}
+.collection-filter-form{display:grid;gap:14px;min-width:0}
+.collection-primary-filters{display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap}
+.collection-primary-filters>label{flex:1 1 170px;min-width:0;font-size:13px}
+.collection-primary-filters>label:first-child{flex:2 1 240px}
+.collection-primary-filters>button{min-height:44px;flex:none;font-size:13px}
+.collection-filter-form input,.collection-filter-form select{min-height:44px;font-size:14px;min-width:0;width:100%}
+.collection-advanced-filters{border-top:1px solid var(--line);padding-top:12px}
+.collection-advanced-filters summary{cursor:pointer;color:var(--primary);font-size:13px;font-weight:600;min-height:32px}
+.collection-advanced-filters .fields{margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px}
+.collection-advanced-filters label{font-size:13px}
+.collection-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.collection-toolbar h2{margin:0;font-size:17px}
+.collection-toolbar .hint{margin:5px 0 0;font-size:12px}
+.collection-scroll{max-height:min(58svh,650px);overflow:auto;overscroll-behavior:contain;min-width:0}
+.collection-scroll table{width:100%;margin:0;min-width:580px}
+.collection-scroll th{position:sticky;top:0;z-index:1;background:var(--soft)}
+.collection-table td,.collection-table th{padding:14px 16px;font-size:14px}
+.collection-table.is-compact td,.collection-table.is-compact th{padding:8px 12px;font-size:13px}
+.collection-table .student-id{font-size:12px}
+.collection-table.is-compact .student-id{font-size:11px}
+.collection-table td>button{min-height:40px;font-size:13px}
+.collection-courses-layout{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(260px,.75fr);gap:22px;align-items:start}
+.collection-course-list{padding:0 20px}
+.collection-course-list .stat-line{padding:16px 0;font-size:15px}
+.collection-year-prepare{padding:22px}
+.collection-year-prepare h2{font-size:18px;margin-top:0}
+.collection-year-prepare>p{font-size:14px}
+.collection-year-prepare label{font-size:13px}
+.collection-cards.collection-scroll{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px;padding:20px;align-content:start;align-items:start}
+.collection-cards .collection-card{min-width:0;padding:18px;border:1px solid var(--line);background:var(--paper);border-radius:6px}
+.collection-card h3{margin:0 0 8px;font-size:16px;overflow-wrap:anywhere}
+.collection-card p{margin:5px 0;font-size:13px}
+.collection-card-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.collection-card-facts{display:grid;gap:10px;margin:18px 0;font-size:13px}
+.collection-card-facts>div{display:grid;grid-template-columns:76px minmax(0,1fr);gap:8px}
+.collection-card-facts dt{color:var(--muted)}
+.collection-card-facts dd{margin:0;overflow-wrap:anywhere}
+.collection-card>button{min-height:42px;font-size:13px}
+.collection-account-status{font-size:12px;font-weight:600;color:var(--success)}
+.collection-account-status.inactive{color:var(--muted)}
+.collection-audit-timeline{list-style:none;margin:0;padding:12px 22px}
+.collection-audit-timeline>li{display:grid;grid-template-columns:145px minmax(0,1fr);gap:18px;position:relative;padding:18px 0;border-bottom:1px solid var(--line)}
+.collection-audit-timeline>li:last-child{border-bottom:0}
+.collection-audit-timeline time{font-size:12px;color:var(--muted)}
+.collection-audit-timeline strong{font-size:14px}
+.collection-audit-timeline p{font-size:13px;margin:6px 0}
+.collection-audit-timeline pre,.collection-table pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;max-width:100%}
+.collection-table .audit-detail{max-width:540px}
+@media(max-width:1050px){.collection-courses-layout{grid-template-columns:minmax(0,1fr)}.collection-year-prepare{max-width:620px}}
+@media(max-width:600px){.collection-filter-panel{padding:16px}.collection-primary-filters{gap:12px}.collection-primary-filters>label,.collection-primary-filters>label:first-child{flex-basis:100%}.collection-primary-filters>button{width:100%}.collection-toolbar{padding:16px;align-items:flex-start;gap:12px}.collection-toolbar>div:last-child{max-width:100%}.collection-cards.collection-scroll{grid-template-columns:minmax(0,1fr);padding:16px}.collection-scroll{max-height:60svh}.collection-audit-timeline{padding:8px 16px}.collection-audit-timeline>li{grid-template-columns:minmax(0,1fr);gap:6px}.collection-advanced-filters .fields{grid-template-columns:minmax(0,1fr)}}

@@ -1,6 +1,7 @@
 import PDFDocument from 'pdfkit';
 import { sections,displayLabel,ageAtSchoolCutoff } from './fields.mjs';
 export async function createFichaPdf(record,fields,course,template,limited=false){
+  fields=fields.filter(field=>!field.hidden&&(!limited||!field.sensitive));
   const doc=new PDFDocument({size:'A4',margins:{top:72,bottom:64,left:48,right:48},bufferPages:true,info:{Title:`Ficha matrícula ${record.year}`,Author:'Colegio Domingo Santa María'}});
   const chunks=[];doc.on('data',x=>chunks.push(x));const complete=new Promise((resolve,reject)=>{doc.on('end',()=>resolve(Buffer.concat(chunks)));doc.on('error',reject);});
   const heading=(text)=>{if(doc.y>680)doc.addPage();doc.font('Helvetica-Bold').fontSize(12).fillColor('#28618c').text(text,48,doc.y,{width:499});doc.moveDown(.5);};
@@ -27,7 +28,7 @@ export async function createFichaPdf(record,fields,course,template,limited=false
     doc.moveDown(2);doc.fontSize(9).fillColor('#4c5c63').text('La decisión digital es una constancia administrativa. Adjunte la copia firmada para conservar su respaldo.');
   }
   if(record.status==='withdrawn'){
-    doc.addPage();heading('Datos de retiro');const event=record.events?.find(x=>x.action==='withdraw');line('Estudiante',record.name);line('Año y curso',`${record.year} · ${course.name}`);line('Fecha de baja',event?.detail.date);line('Motivo',event?.detail.reason);for(const f of fields.filter(x=>x.section==='retiro'))line(f.label,record.data[f.key]);doc.moveDown(2);doc.text('Firma de apoderado/a: ________________________');doc.moveDown(2);doc.text('Firma de funcionario/a: ______________________');
+    doc.addPage();heading('Datos de retiro');const event=record.events?.find(x=>x.action==='withdraw');line('Estudiante',record.name);line('Año y curso',`${record.year} · ${course.name}`);line('Fecha de baja',event?.detail.date);if(!limited)line('Motivo',event?.detail.reason);for(const f of fields.filter(x=>x.section==='retiro'))line(f.label,record.data[f.key]);doc.moveDown(2);doc.text('Firma de apoderado/a: ________________________');doc.moveDown(2);doc.text('Firma de funcionario/a: ______________________');
   }
   const range=doc.bufferedPageRange();for(let i=range.start;i<range.start+range.count;i++){doc.switchToPage(i);const bottom=doc.page.margins.bottom;doc.page.margins.bottom=0;doc.font('Helvetica-Bold').fontSize(10).fillColor('#28618c').text('DOMINGO SANTA MARÍA · MATRÍCULA',48,35,{width:499,lineBreak:false});doc.font('Helvetica').fontSize(8).fillColor('#586672').text(`${record.name} · ${record.year} · ${course.name}`,48,51,{width:499,lineBreak:false});doc.text(`Expediente ${record.id.slice(0,8)} · Revisión ${record.version} · Página ${i+1} de ${range.count}`,48,805,{width:499,lineBreak:false});doc.page.margins.bottom=bottom;}
   doc.end();return complete;

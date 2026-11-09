@@ -1,0 +1,12 @@
+# Optional: the administrator declares an existing reverse-proxy network.
+# This does not attach the attendance application or any database automatically.
+services:
+  puramatricula:
+    networks:
+      matricula-private: {}
+      colegio-proxy:
+        aliases: [puramatricula-backend]
+networks:
+  colegio-proxy:
+    external: true
+    name: ${MATRICULA_PROXY_NETWORK:?Indique expresamente la red del proxy HTTPS existente}

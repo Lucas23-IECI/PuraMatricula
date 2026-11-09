@@ -1,0 +1,54 @@
+name: puramatricula
+services:
+  puramatricula:
+    image: ${MATRICULA_IMAGE:-puramatricula:0.2.0}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    user: "1000:1000"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 30s
+    pids_limit: 128
+    mem_limit: 768m
+    environment:
+      NODE_ENV: production
+      MATRICULA_DATA: /data/matricula
+      MATRICULA_HOST: 0.0.0.0
+      MATRICULA_PORT: "4318"
+      MATRICULA_ORIGIN: http://127.0.0.1:${MATRICULA_LOCAL_PORT:-4319}
+      MATRICULA_TRANSPORT: local
+    ports:
+      - target: 4318
+        published: "${MATRICULA_LOCAL_PORT:-4319}"
+        host_ip: 127.0.0.1
+        protocol: tcp
+    volumes:
+      - matricula-data:/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=67108864,mode=1777
+    networks: [matricula-local]
+    healthcheck:
+      test: [CMD, node, scripts/docker-healthcheck.mjs, --quiet]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+volumes:
+  matricula-data:
+    name: ${MATRICULA_DATA_VOLUME:-puramatricula_data}
+networks:
+  matricula-local:
+    name: ${MATRICULA_LOCAL_NETWORK_NAME:-puramatricula_local}
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
+      com.docker.network.bridge.enable_icc: "false"

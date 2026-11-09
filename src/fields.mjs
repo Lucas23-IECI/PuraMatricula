@@ -6,7 +6,7 @@ export const baseFields = [
   f('birthDate','Fecha de nacimiento','identificacion','date'), f('birthPlace','Lugar de nacimiento','identificacion'), f('email','Correo del estudiante','identificacion','email'),
   f('address','Domicilio','identificacion'), f('commune','Comuna del estudiante','identificacion'), f('addressChange','Cambio de domicilio','identificacion'),
   f('indigenous','Descendencia indígena','reservados','select',true,yesNo), f('indigenousDetail','Pueblo o descendencia indicada','reservados','text',true),
-  f('emergencyPhone','Teléfono de emergencia','contactos','tel'), f('emergencyName','A quién se avisa','contactos'),
+  f('emergencyPhone','Teléfono de emergencia','contactos','tel'), f('emergencyEmail','Correo de emergencia','contactos','email'), f('emergencyName','A quién se avisa','contactos'),
   ...['father','mother'].flatMap(p => [f(p+'Name',p==='father'?'Nombre del padre':'Nombre de la madre','padres'), f(p+'BirthDate','Fecha de nacimiento','padres','date'), f(p+'Alive','Vive','reservados','select',true,yesNo), f(p+'Identifier','Identificador','padres'), f(p+'Nationality','Nacionalidad','padres'), f(p+'Occupation','Ocupación','social','text',true), f(p+'Phone','Teléfono','padres','tel'), f(p+'Workplace','Lugar de trabajo','social','text',true), f(p+'Income','Ingreso','social','text',true), f(p+'Address','Domicilio','padres'), f(p+'Education','Escolaridad','social','text',true)]),
   f('parentsMaritalStatus','Situación civil de los padres','social','text',true),
   ...['guardian','alternate'].flatMap(p => [f(p+'Name',p==='guardian'?'Nombre del apoderado':'Nombre del apoderado suplente','apoderados'), f(p+'Identifier','Identificador','apoderados'), f(p+'Nationality','Nacionalidad','apoderados'), f(p+'BirthDate','Fecha de nacimiento','apoderados','date'), f(p+'Relationship','Parentesco','apoderados'), f(p+'Address','Dirección','apoderados'), f(p+'Commune','Comuna','apoderados'), f(p+'Phone','Teléfono','apoderados','tel'), f(p+'Email','Correo','apoderados','email'), f(p+'Education','Escolaridad','social','text',true), f(p+'Employment','Situación laboral','social','text',true), f(p+'Income','Ingreso','social','text',true), f(p+'Occupation','Ocupación','social','text',true)]),
@@ -24,6 +24,10 @@ export const baseFields = [
 export const sections = { identificacion:'Identificación', contactos:'Emergencia', apoderados:'Apoderados', padres:'Padres', matricula:'Matrícula anual', constancias:'Constancias', autorizaciones:'Autorizaciones', documentos:'Documentos', reservados:'Otros antecedentes reservados', social:'Apoyo social', salud:'Salud', judicial:'Antecedentes judiciales', retiro:'Retiro', adicionales:'Preguntas adicionales', procedencia:'Datos de origen de la importación' };
 export const permissions = ['read','write','enroll','sensitive','documents','export','audit','admin','import','backup'];
 export const permissionLabels = {read:'Consultar fichas',write:'Editar fichas',enroll:'Gestionar matrícula y años',sensitive:'Ver y editar antecedentes reservados',documents:'Adjuntar y descargar documentos',export:'Exportar fichas y nóminas',audit:'Consultar auditoría',admin:'Administrar cuentas y plantillas',import:'Importar padrón',backup:'Generar respaldos'};
+export function pendingFields(data,status){
+  if(status==='withdrawn') return [];
+  return ['guardianName','guardianPhone','emergencyPhone','imagesDecision','outingsDecision','birthCertificate'].filter(key=>!data?.[key]||data[key]==='Pendiente'||(key==='birthCertificate'&&data[key]==='No'));
+}
 export function displayLabel(field){const person=[['father','padre'],['mother','madre'],['guardian','apoderado'],['alternate','suplente']].find(([prefix])=>field.key.startsWith(prefix));return person&&!field.key.endsWith('Name')?`${field.label} (${person[1]})`:field.label;}
 export function ageAtSchoolCutoff(birthDate,year){if(!/^\d{4}-\d{2}-\d{2}$/.test(birthDate||''))return '';const [y,m,d]=birthDate.split('-').map(Number),age=year-y-((m>3||(m===3&&d>30))?1:0);return age>=0&&age<100?String(age):'';}
 export function normalizeIdentifier(value){ return String(value||'').normalize('NFKC').replace(/[.\s-]/g,'').toUpperCase(); }
@@ -37,10 +41,10 @@ export function validateIdentifier(type,value){
 }
 export function validateFields(fields){
   if(!Array.isArray(fields)||fields.length<baseFields.length||fields.length>180) throw new Error('Conserve la referencia y agregue hasta 180 campos.');
-  for(const field of baseFields){ const match=fields.find(x=>x.key===field.key); if(!match||JSON.stringify(match)!==JSON.stringify(field)) throw new Error('Los campos de referencia se conservan en esta versión.'); }
   const keys=new Set(); for(const x of fields){
-    if(!/^[a-zA-Z][a-zA-Z0-9]{1,60}$/.test(x.key)||keys.has(x.key)||typeof x.label!=='string'||!x.label.trim()||x.label.length>120||!Object.hasOwn(sections,x.section)||!['text','textarea','date','email','tel','select'].includes(x.type)||typeof x.sensitive!=='boolean') throw new Error('Campo adicional inválido.');
+    if(!x||typeof x!=='object'||Array.isArray(x)||typeof x.key!=='string'||!/^[a-zA-Z][a-zA-Z0-9]{1,60}$/.test(x.key)||keys.has(x.key)||typeof x.label!=='string'||!x.label.trim()||x.label.length>120||!Object.hasOwn(sections,x.section)||!['text','textarea','date','email','tel','select'].includes(x.type)||typeof x.sensitive!=='boolean'||(x.hidden!==undefined&&typeof x.hidden!=='boolean')) throw new Error('Campo adicional inválido.');
     if(x.type==='select'&&(!Array.isArray(x.options)||!x.options.length||x.options.length>30||x.options.some(o=>typeof o!=='string'||o.length>120))) throw new Error('Opciones inválidas.'); keys.add(x.key);
   }
+  for(const field of baseFields){ const match=fields.find(x=>x.key===field.key); if(!match||JSON.stringify(match)!==JSON.stringify(field)) throw new Error('Los campos de referencia se conservan en esta versión.'); }
   return fields;
 }

@@ -6,7 +6,11 @@
  * previsualización y luego pedir confirmación antes de persistirlo.
  */
 
+import { parseSchoolYear, schoolYearRange } from './school-years.mjs';
+import { assertSafeXlsx } from './xlsx-safety.mjs';
+
 const STUDENT_ROLES = new Set(['estudiante', 'alumno', 'student']);
+const SOURCE_YEAR_HEADERS = new Set(['ano', 'periodo', 'anoescolar', 'anomatricula', 'anodematricula', 'matricula']);
 const ACCOUNT_HEADERS = new Set([
   'contrasena', 'password', 'passwd', 'clave', 'nombreusuario', 'username',
   'usuario', 'user', 'correoacceso', 'emailacceso'
@@ -78,6 +82,7 @@ function isAccountHeader(value) {
 
 const KNOWN_HEADERS = new Set([
   ...ERP_USUARIOS_HEADERS.map(normalizeHeader),
+  ...SOURCE_YEAR_HEADERS,
   'idusuario', 'idusuarioerp', 'uuiderp', 'run', 'id', 'digitoverificador', 'documenttype',
   'paisdocumento', 'country', 'nombre', 'name', 'apellido', 'lastname', 'correo', 'mail',
   'telefono', 'phone', 'role', 'grade', 'seccion', 'genero', 'gender', 'fecha_nacimiento', 'nacimiento',
@@ -341,6 +346,37 @@ function inspectSheet(value, explicit = {}, headerRow = null) {
 
 function toObjectRows(value) { return inspectSheet(value).entries.map(item => item.row); }
 
+function titleYearDeclarations(value, headerRow) {
+  if (!Array.isArray(value) || !value.some(Array.isArray) || headerRow < 2) return [];
+  const declarations = [];
+  for (let index = 0; index < Math.min(headerRow - 1, value.length); index++) {
+    const cells = Array.isArray(value[index]) ? value[index] : [];
+    for (let column = 0; column < cells.length; column++) {
+      const cell = text(cells[column]).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const match = cell.match(/^(?:(?:ficha|listado|nomina|registro|planilla)\s+(?:de\s+)?)?(ano\s+escolar|ano\s+(?:de\s+)?matricula|periodo|matricula)\s*[:\-]?\s*(.*)$/i);
+      if (!match) continue;
+      const raw = match[2].trim() || text(cells[column + 1]);
+      // A generic "Ficha de matrícula" title does not declare a period.
+      if (!raw || (['matricula', 'periodo'].includes(normalizeHeader(match[1])) && !/^\d/.test(raw))) continue;
+      declarations.push({ value: raw, row: index + 1, source: 'title' });
+    }
+  }
+  return declarations;
+}
+
+function rowYearDeclarations(raw, kind) {
+  const declarations = [];
+  for (const [header, value] of Object.entries(raw)) {
+    const key = normalizeHeader(header), rawValue = text(value);
+    if (!SOURCE_YEAR_HEADERS.has(key) || !rawValue) continue;
+    // Administrative ERP sheets use "Matrícula" for VIGENTE/RETIRADO,
+    // not a period. Explicit Año/Periodo columns always remain authoritative.
+    if (key === 'matricula' && ['administrativo', 'identificadores'].includes(kind) && !/^\d/.test(rawValue)) continue;
+    declarations.push({ value, source: 'column' });
+  }
+  return declarations;
+}
+
 function getSheets(workbook) {
   if (Array.isArray(workbook)) return { Usuarios: workbook };
   if (workbook instanceof Map) return Object.fromEntries(workbook.entries());
@@ -392,6 +428,8 @@ export function normalizeAdministrativeRows(rows, { sheet = 'Estudiantes' } = {}
 }
 
 function normalizeCourseRosterRow(raw, { mapping, rowNumber, sheet, year, courseName, courseId, contactOwner, addressOwner }) {
+  const role = firstValue(raw, ['Rol', 'role']);
+  if (role && !STUDENT_ROLES.has(normalizeRole(role))) return { row: null, ignored: rowIssue(rowNumber, 'ROL_IGNORADO', 'La fila no corresponde a un estudiante; se omitió.', { sheet, role }) };
   const get = key => mappedValue(raw, mapping, key);
   const names = get('names'), surname = get('surname'), secondSurname = get('secondSurname'), identifierRaw = get('identifier');
   if (![names, surname, secondSurname, identifierRaw].some(Boolean)) return { row: null, ignored: rowIssue(rowNumber, 'FILA_SIN_ESTUDIANTE', 'Se omitió una fila sin datos de estudiante.', { sheet }) };
@@ -463,6 +501,8 @@ function administrativeToStudent(row) {
  */
 export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', year = null, courses = null, maxRows = 5000, columnMapping = {}, sheetMappings = {}, contactOwner = 'unassigned', addressOwner = 'unassigned' } = {}) {
   const sheets = getSheets(workbook);
+  const selectedYear = parseSchoolYear(year), sourceYearValues = new Set();
+  let hasSourceYear = false, invalidSourceYear = false;
   const errors = [];
   const warnings = [];
   const ignored = [];
@@ -497,13 +537,30 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
     const summary = { name: sheet, format: kind, headers: info.headers.filter(header => !isAccountHeader(header)), headerRow: info.headerRow,
       totalRows: info.entries.length, studentRows: 0, ignoredRows: 0, included, courseName: normalizeCourseName(config.courseName || (kind === 'por_curso' ? sheet : '')), suggestedMapping: suggestedMapping(info.headers) };
     sheetSummaries.push(summary);
-    specs.push({ sheet, kind, config, info, mapping, summary });
+    specs.push({ sheet, kind, config, info, mapping, summary, yearTitles: titleYearDeclarations(sheetRows, info.headerRow) });
   }
   const primary = specs.some(spec => spec.summary.included && ['usuarios', 'por_curso'].includes(spec.kind) && spec.info.entries.length);
   const hasAdministrative = specs.some(spec => spec.summary.included && spec.kind === 'administrativo');
   const mixedPrimary = specs.some(spec => spec.summary.included && spec.kind === 'usuarios') && specs.some(spec => spec.summary.included && spec.kind === 'por_curso');
   if (mixedPrimary) errors.push(rowIssue(0, 'FORMATOS_MEZCLADOS', 'El libro mezcla Usuarios y hojas de matrícula por curso. Seleccione explícitamente un formato para evitar cargas superpuestas.'));
   let intendedRows = 0;
+  function registerSourceYear(declaration, sheet, fallbackRow) {
+    hasSourceYear = true;
+    const sourceYear = parseSchoolYear(declaration.value);
+    if (sourceYear === null) {
+      invalidSourceYear = true;
+      errors.push(rowIssue(declaration.row || fallbackRow, 'IMPORT_YEAR_INVALID', `La fuente declara un año de matrícula inválido. Use un año de cuatro dígitos entre ${schoolYearRange.min} y ${schoolYearRange.max}.`, { sheet, source: declaration.source }));
+      return null;
+    }
+    sourceYearValues.add(sourceYear);
+    return sourceYear;
+  }
+  function attachSourceYear(candidate, raw, spec, rowNumber) {
+    if (!spec.registeredTitleYears) spec.registeredTitleYears = spec.yearTitles.map(declaration => registerSourceYear(declaration, spec.sheet, rowNumber)).filter(value => value !== null);
+    const rowYears = rowYearDeclarations(raw, spec.kind).map(declaration => registerSourceYear(declaration, spec.sheet, rowNumber)).filter(value => value !== null);
+    const declaredYears = [...new Set([...spec.registeredTitleYears, ...rowYears])];
+    if (candidate && declaredYears.length === 1) candidate.sourceYear = declaredYears[0];
+  }
   function addRow(candidate) {
     const keys = [candidate.identity.sourceId ? `erp:${candidate.identity.sourceId}` : null,
       candidate.identity.value ? `${candidate.identity.type}:${candidate.identity.value.replace(/[.\s-]/g, '').toUpperCase()}` : null,
@@ -553,6 +610,8 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
         if (normalized.row && config.courseName) normalized.row.courseName = normalizeCourseName(config.courseName);
         if (normalized.row && config.courseId) normalized.row.courseId = config.courseId;
       } else {
+        const role = firstValue(raw, ['Rol', 'role']);
+        if (role && !STUDENT_ROLES.has(normalizeRole(role))) { summary.ignoredRows++; ignored.push(rowIssue(rowNumber, 'ROL_IGNORADO', 'La fila no corresponde a un estudiante; se omitió.', { sheet, role })); continue; }
         if(Object.keys({ ...columnMapping,...(config.columnMapping||{}) }).length){errors.push(rowIssue(rowNumber,'MAPEO_ADMINISTRATIVO_INCOMPLETO','Para cambiar las columnas de este padrón, asigne también nombres, apellido e identificación del estudiante.',{sheet}));summary.studentRows++;intendedRows++;continue;}
         const admin = normalizeAdministrativeRow(raw, { rowNumber, sheet });
         administrativeRows.push(admin);
@@ -562,6 +621,7 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
       const withSheet = item => ({ ...item, sheet });
       warnings.push(...(normalized.warnings || []).map(withSheet));
       if (normalized.ignored) { summary.ignoredRows++; ignored.push(withSheet(normalized.ignored)); continue; }
+      attachSourceYear(normalized.row, raw, spec, rowNumber);
       summary.studentRows++;
       intendedRows++;
       if (intendedRows > maxRows) continue;
@@ -570,6 +630,15 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
     }
   }
   if (intendedRows > maxRows) errors.push(rowIssue(0, 'LIMITE_FILAS', `El libro contiene ${intendedRows} filas de estudiantes; la carga admite hasta ${maxRows} en total. No se importó un lote parcial.`));
+  const sourceYears = [...sourceYearValues].sort((a, b) => a - b);
+  const mixedYears = sourceYears.length > 1;
+  if (mixedYears) errors.push(rowIssue(0, 'IMPORT_YEARS_MIXED', 'La selección contiene varios años de matrícula. Separe los períodos o seleccione únicamente las hojas del año que desea importar.', { sourceYears }));
+  const resolvedYear = mixedYears || invalidSourceYear ? null : sourceYears[0] ?? selectedYear;
+  const conflict = mixedYears || (sourceYears.length === 1 && selectedYear !== null && sourceYears[0] !== selectedYear);
+  const yearContext = { selectedYear, sourceYears, resolvedYear, source: hasSourceYear ? 'file' : 'selection', conflict };
+  if (!mixedYears && !invalidSourceYear && conflict) warnings.push(rowIssue(0, 'IMPORT_YEAR_CHANGED', `La planilla corresponde a ${resolvedYear}; ese será el año de la importación, en lugar de ${selectedYear}.`, { selectedYear, resolvedYear }));
+  year = resolvedYear;
+  rows.forEach(candidate => { candidate.courseYear = resolvedYear; });
   const unresolvedCourses = [];
   if (Array.isArray(courses)) {
     const normalizedCourses = courses.map((course) => ({
@@ -598,6 +667,7 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
   else if (!rows.length && !errors.length) errors.push(rowIssue(0, 'FILAS_AUSENTES', 'La selección no contiene filas de estudiantes para importar.'));
   return {
     source: origin,
+    yearContext,
     rows,
     administrativeRows,
     errors,
@@ -627,6 +697,7 @@ export async function readXlsx(input, { sheets = null, fileName = '' } = {}) {
     error.code = 'XLS_FORMAT_UNSUPPORTED';
     throw error;
   }
+  assertSafeXlsx(input);
   let reader;
   try {
     const imported = await import('read-excel-file/node');

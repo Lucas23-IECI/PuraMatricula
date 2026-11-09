@@ -2,6 +2,16 @@ node_modules/
 .local/
 data/
 test-results/
+/output/
+/backups/
+/certificados/
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb
+*.docx
+*.pem
+*.enc
 *.sqlite*
 *.dsmbak
 *.key

@@ -2,9 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { parseSchoolWorkbook, normalizeSchoolWorkbook, normalizeHeader, normalizeCourseName } from './school-import.mjs';
 import { hasImportFields, sourceFields } from './import-fields.mjs';
 import { normalizeIdentifier, validateIdentifier } from './fields.mjs';
+import { parseSchoolYear } from './school-years.mjs';
 
 const MAX_ROWS = 500;
 const SOURCE = 'ERP_USUARIOS';
+const UPDATE_FIELDS = Object.freeze(['studentPhone', 'email', 'address', 'commune', 'guardianPhone', 'guardianEmail', 'guardianAddress', 'guardianCommune']);
 
 export class SchoolImportError extends Error {
   constructor(message, code = 'SCHOOL_IMPORT_INVALID', status = 400) {
@@ -33,6 +35,7 @@ async function auditInTransaction(store, actor, action, target, detail = {}) {
 // The historical local store exposes a synchronous transaction callback,
 // while the cloud adapters expose an async one. Keep rollback atomic in both.
 async function runTransaction(store, work) {
+  if (store.kind === 'sqlite' || store.kind === 'postgres') return store.transaction(work);
   const probe = store.db.prepare('SELECT 1').get();
   if (probe && typeof probe.then === 'function') return store.transaction(work);
   store.db.exec('BEGIN IMMEDIATE');
@@ -97,13 +100,13 @@ function displayName(data) { return [data.names, data.surname, data.secondSurnam
 function stableRows(rows) {
   return rows.map(row => ({
     rowNumber: row.rowNumber, sourceSheet:row.sourceSheet || '', origin: row.origin || SOURCE, originId: row.originId,
-    courseId: row.courseId || null, courseName: row.courseName || '', section: row.section || '', year: Number(row.year || row.courseYear || 0),
-    data: sourceData(row)
+    courseId: row.courseId || null, courseName: row.courseName || '', section: row.section || '', year: Number(row.year || row.courseYear || 0), sourceYear: row.sourceYear ?? null,
+    data: sourceData(row), review: row.review
   }));
 }
 
-function ticketPayload(year, rows, coursesToCreate) {
-  return JSON.stringify({ year: Number(year), rows: stableRows(rows), coursesToCreate: coursesToCreate.map(course => ({ name: course.name, year: Number(course.year) })) });
+function ticketPayload(actor, templateId, year, rows, coursesToCreate) {
+  return JSON.stringify({ purpose: 'school-roster-review-v2', actor, templateId, year: Number(year), rows: stableRows(rows), coursesToCreate: coursesToCreate.map(course => ({ name: course.name, year: Number(course.year) })) });
 }
 
 function hashIdentity(store, data) {
@@ -123,7 +126,7 @@ async function loadTemplateFields(store) {
   if (!latest) return { error: templateMissingError(), fields: [] };
   let fields = [];
   try { fields = typeof latest.fields === 'string' ? JSON.parse(latest.fields) : latest.fields; } catch { fields = []; }
-  return hasImportFields(fields) ? { error: null, fields } : { error: templateMissingError(), fields };
+  return hasImportFields(fields) ? { error: null, fields, id: Number(latest.id) } : { error: templateMissingError(), fields };
 }
 
 function validateImportData(row, templateFields, svc, user) {
@@ -181,16 +184,6 @@ function resolveCourses(rows, courses, mapping = {}) {
   return { resolved, proposals: [...proposals.values()] };
 }
 
-async function existingIdentityIssue(store, candidate) {
-  if (!store?.db?.prepare) return null;
-  const data = candidate.data;
-  const origin = candidate.origin || SOURCE;
-  const originId = candidate.originId;
-  const hash = hashIdentity(store, data);
-  const found = await dbGet(store, 'SELECT id FROM students WHERE identity_hash=? OR (origin=? AND origin_id=?)', hash, origin, originId);
-  return found ? { code: 'DUPLICADO_EXISTENTE', message: 'La identidad u origen ya existe en la matrícula; se requiere revisión manual.', studentId: found.id } : null;
-}
-
 function identityKeys(store, candidate) {
   const data = candidate.data || {};
   const hash = hashIdentity(store, data);
@@ -219,6 +212,87 @@ async function existingIdentityMap(store, candidates) {
   return found;
 }
 
+async function existingYearRecords(store, identities, year) {
+  const found = new Map();
+  const ids = unique([...identities.values()].map(student => student.id));
+  for (let start = 0; start < ids.length; start += 400) {
+    const chunk = ids.slice(start, start + 400);
+    const records = await dbAll(store, `SELECT id,student_id,year,course_id,template_id,status,version,data FROM records WHERE year=? AND student_id IN (${chunk.map(() => '?').join(',')})`, year, ...chunk);
+    for (const record of records) found.set(record.student_id, record);
+  }
+  return found;
+}
+
+/** Only missing target-year records need an authorized annual reference. */
+async function existingAnnualSources(store,identities,records){
+  const found=new Map(),ids=unique([...identities.values()].map(student=>student.id)).filter(id=>!records.has(id));
+  for(let offset=0;offset<ids.length;offset+=400){
+    const chunk=ids.slice(offset,offset+400);
+    const rows=await dbAll(store,`SELECT id,student_id,year,course_id,template_id,status,version,data FROM records WHERE student_id IN (${chunk.map(()=>'?').join(',')}) ORDER BY year DESC,id`,...chunk);
+    for(const row of rows){const entries=found.get(row.student_id)||[];entries.push(row);found.set(row.student_id,entries);}
+  }
+  return found;
+}
+const compareName = value => asText(value).normalize('NFKD').toLocaleLowerCase('es').replace(/[\p{M}\p{P}\s]+/gu, '');
+const needsReview = reason => ({ kind: 'review', reason });
+const comparableDifference = (left, right, normalize = asText) => Boolean(left && right && normalize(left) !== normalize(right));
+
+async function assessRow(store, svc, user, candidate, identities, records, templates, annualSources=new Map()) {
+  const keys = identityKeys(store, candidate);
+  const hashMatch = identities.get(`hash:${keys.hash}`);
+  const originMatch = keys.originId && identities.get(`origin:${keys.origin}\u0000${keys.originId}`);
+  if (originMatch && (originMatch.identity_hash !== keys.hash || (hashMatch && originMatch.id !== hashMatch.id))) {
+    return { review: needsReview('El identificador y la referencia de origen no coinciden. Revise la identidad en la ficha.') };
+  }
+  if (!hashMatch) return { review: { kind: 'new' } };
+  const record = records.get(hashMatch.id);
+  if(!record){
+    const targetAllowed=candidate.courseId
+      ? ['read','write','enroll'].every(permission=>can(svc,user,permission,candidate.courseId))
+      : Boolean(user?.allCourses&&['read','write','enroll'].every(permission=>can(svc,user,permission)));
+    if(!targetAllowed)return {review:needsReview('La matrícula de otro año requiere revisión por una cuenta autorizada.')};
+    const source=annualSources.get(hashMatch.id)?.[0];
+    if(!source||!can(svc,user,'read',source.course_id)||!can(svc,user,'enroll',source.course_id)||(Number(candidate.year)>=Number(source.year)&&source.status==='withdrawn'))return {review:needsReview('La matrícula de otro año requiere revisión por una cuenta autorizada. Revise el reingreso si corresponde.')};
+    const previous=JSON.parse(store.unseal(source.data)),incoming=candidate.data;
+    if(hashIdentity(store,previous)!==keys.hash||comparableDifference(previous.names,incoming.names,compareName)
+      ||comparableDifference([previous.surname,previous.secondSurname].filter(Boolean).join(' '),[incoming.surname,incoming.secondSurname||previous.secondSurname].filter(Boolean).join(' '),compareName)
+      ||comparableDifference(previous.birthDate,incoming.birthDate))return {review:needsReview('Los datos de identidad difieren. Revise la ficha antes de preparar otra matrícula anual.')};
+    return {source,review:{kind:'annual',studentId:hashMatch.id,sourceRecordId:source.id,sourceYear:Number(source.year),sourceVersion:Number(source.version),year:Number(candidate.year),reason:`Nueva matrícula anual ${candidate.year}. Se conservarán las fichas anteriores; debe seleccionarla explícitamente.`}};
+  }
+  if (!can(svc, user, 'read', record.course_id) || !can(svc, user, 'write', record.course_id)) {
+    return { review: needsReview('Una ficha existente requiere revisión por una cuenta autorizada.') };
+  }
+  if (!candidate.courseId || candidate.courseId !== record.course_id) return { review: needsReview('El curso no coincide. La importación no traslada estudiantes.') };
+  if (record.status === 'withdrawn') return { review: needsReview('La ficha está retirada. Revise el reingreso por separado.') };
+  const previous = JSON.parse(store.unseal(record.data));
+  const incoming = candidate.data;
+  if (hashIdentity(store, previous) !== keys.hash || comparableDifference(previous.names, incoming.names, compareName)
+      || comparableDifference([previous.surname, previous.secondSurname].filter(Boolean).join(' '), [incoming.surname, incoming.secondSurname || previous.secondSurname].filter(Boolean).join(' '), compareName)
+      || comparableDifference(previous.birthDate, incoming.birthDate)) {
+    return { review: needsReview('Los datos de identidad difieren. Corríjalos individualmente antes de actualizar el contacto.') };
+  }
+  const guardianDiffers = comparableDifference(previous.guardianIdentifier, incoming.guardianIdentifier, normalizeIdentifier)
+    || comparableDifference(previous.guardianName, incoming.guardianName, compareName);
+  if (!templates.has(record.template_id)) {
+    const template = await dbGet(store, 'SELECT fields FROM templates WHERE id=?', record.template_id);
+    templates.set(record.template_id, new Map(JSON.parse(template?.fields || '[]').map(field => [field.key, field])));
+  }
+  const fields = templates.get(record.template_id);
+  const changes = [];
+  for (const key of UPDATE_FIELDS) {
+    const field = fields.get(key), after = incoming[key];
+    if (!field || typeof after !== 'string' || !after.trim() || (key.startsWith('guardian') && guardianDiffers)
+        || (field.sensitive && !can(svc, user, 'sensitive'))) continue;
+    const before = asText(previous[key]);
+    if (before !== after.trim()) changes.push({ key, label: field.label, before, after: after.trim() });
+  }
+  if (!changes.length) {
+    return { review: guardianDiffers ? needsReview('El apoderado no coincide. Revise su identidad y contacto en la ficha.') : { kind: 'match' } };
+  }
+  return { record, previous, review: { kind: 'update', recordId: record.id, version: Number(record.version), templateId: Number(record.template_id), changes,
+    ...(guardianDiffers ? { reason: 'El apoderado no coincide; sus datos no se modificarán.' } : {}) } };
+}
+
 async function decodeWorkbook(input) {
   if (input?.workbook) return input.workbook;
   if (input?.rows || input?.sheets) return input;
@@ -236,83 +310,121 @@ export function createSchoolImport(store, svc) {
   const preview = async (user, input = {}) => {
     requirePermission(svc, user, 'import');
     requirePermission(svc, user, 'write');
-    const year = Number(input.year);
-    if (!Number.isInteger(year) || year < 2020 || year > 2100) throw new SchoolImportError('Indique un año de matrícula válido.', 'YEAR_INVALID');
+    const selectedYear = parseSchoolYear(input.year);
+    if (selectedYear === null) throw new SchoolImportError('Indique un año de matrícula válido.', 'YEAR_INVALID');
     const templateInfo = await loadTemplateFields(store);
     if (templateInfo?.error) return { canImport: false, rows: [], errors: [templateInfo.error], warnings: [], coursesToCreate: [], unresolvedCourses: [], summary: { total: 0, errors: 1 } };
     const templateFields = templateInfo?.fields || [];
     const workbook = await decodeWorkbook(input);
-    const parserOptions={year,maxRows:MAX_ROWS,fileName:input.name||input.fileName||'',columnMapping:input.columnMapping,sheetMappings:input.sheetMappings,contactOwner:input.contactOwner,addressOwner:input.addressOwner};
+    const parserOptions={year:selectedYear,maxRows:MAX_ROWS,fileName:input.name||input.fileName||'',columnMapping:input.columnMapping,sheetMappings:input.sheetMappings,contactOwner:input.contactOwner,addressOwner:input.addressOwner};
     const parsed = Buffer.isBuffer(workbook) || workbook instanceof Uint8Array || typeof workbook === 'string'
       ? await parseSchoolWorkbook(workbook, parserOptions).catch(error=>{throw new SchoolImportError(error.message,error.code||'XLSX_INVALID');})
       : normalizeSchoolWorkbook(workbook, parserOptions);
+    const yearContext=parsed.yearContext||{selectedYear,sourceYears:[],resolvedYear:selectedYear,source:'selection',conflict:false};
+    const year=parseSchoolYear(yearContext.resolvedYear)??selectedYear;
     const courses = await availableCourses(store, input, year);
     const mapped = resolveCourses(parsed.rows, courses, input.courseMapping || {});
     const rows = [];
     const errors = [...(parsed.errors || [])];
     const warnings = [...(parsed.warnings || [])];
-    for (const item of mapped.resolved) {
+    const candidates = mapped.resolved.map(item => {
       const data = sourceData(item.row);
-      const candidate = { ...item.row, year, courseId: item.course?.id || null, data, fields: data, origin: item.row.origin || SOURCE };
-      const location={row:item.row.rowNumber,sheet:item.row.sourceSheet};
-      if(item.issue)errors.push({...location,...item.issue});
-      else if (!item.course) errors.push({ ...location, code: 'CURSO_NO_RESUELTO', message: `El curso «${item.labels.at(-1) || item.row.courseName}» requiere asignación o creación explícita.`, courseName: item.row.courseName, section: item.row.section });
-      else if (!can(svc, user, 'write', item.course.id)) errors.push({ ...location, code: 'COURSE_PERMISSION_DENIED', message: 'La cuenta no tiene permiso de edición para ese curso.', courseId: item.course.id });
-      try { validateImportData(candidate, templateFields, svc, user); } catch (error) { errors.push({ ...location, code: error.code || 'DATA_INVALID', message: error.message }); }
+      return { ...item.row, year, courseId: item.course?.id || null, data, fields: data, origin: item.row.origin || SOURCE };
+    });
+    const identities = await existingIdentityMap(store, candidates);
+    const records = await existingYearRecords(store, identities, year);
+    const annualSources = await existingAnnualSources(store, identities, records);
+    const templates = new Map();
+    const requestedCourses = new Map();
+    const counts = { new: 0, annual: 0, unchanged: 0, updates: 0, review: 0 };
+    for (const [index, candidate] of candidates.entries()) {
+      const item = mapped.resolved[index], location = { row: candidate.rowNumber, sheet: candidate.sourceSheet };
+      try {
+        validateImportData(candidate, templateFields, svc, user);
+        candidate.review = (await assessRow(store, svc, user, candidate, identities, records, templates, annualSources)).review;
+      } catch (error) {
+        if (!(error instanceof SchoolImportError)) throw error;
+        errors.push({ ...location, code: error.code, message: error.message });
+        candidate.review = needsReview('La fila tiene datos que requieren corrección.');
+      }
+      if (candidate.review.kind === 'new'||candidate.review.kind === 'annual') {
+        counts[candidate.review.kind==='annual'?'annual':'new']++;
+        if (item.issue) errors.push({ ...location, ...item.issue });
+        else if (!item.course) {
+          errors.push({ ...location, code: 'CURSO_NO_RESUELTO', message: `El curso «${item.labels.at(-1) || item.row.courseName}» requiere asignación o creación explícita.`, courseName: item.row.courseName, section: item.row.section });
+          if (item.proposalKey) requestedCourses.set(item.proposalKey, (requestedCourses.get(item.proposalKey) || 0) + 1);
+        } else if (!can(svc, user, 'write', item.course.id)) errors.push({ ...location, code: 'COURSE_PERMISSION_DENIED', message: 'La cuenta no tiene permiso de edición para ese curso.', courseId: item.course.id });
+      } else if (candidate.review.kind === 'update') counts.updates++;
+      else if (candidate.review.kind === 'match') counts.unchanged++;
+      else counts.review++;
       rows.push(candidate);
     }
-    const existing = await existingIdentityMap(store, rows);
-    for (const candidate of rows) {
-      const keys = identityKeys(store, candidate);
-      const duplicate = existing.get(`hash:${keys.hash}`) || (keys.originId && existing.get(`origin:${keys.origin}\u0000${keys.originId}`));
-      if (duplicate) errors.push({ row: candidate.rowNumber, sheet:candidate.sourceSheet, code: 'DUPLICADO_EXISTENTE', message: 'La identidad u origen ya existe en la matrícula; se requiere revisión manual.' });
-    }
-    const coursesToCreate = mapped.proposals.map(({ key, name, year: courseYear, count, sourceNames }) => ({ key, name, year: courseYear || year, count, sourceNames }));
+    const coursesToCreate = mapped.proposals.filter(course => requestedCourses.has(course.key)).map(({ key, name, year: courseYear, sourceNames }) => ({ key, name, year: courseYear || year, count: requestedCourses.get(key), sourceNames }));
     const hasNonCourseErrors = errors.some(error => error.code !== 'CURSO_NO_RESUELTO');
-    const ticket = hasNonCourseErrors||!rows.length ? null : store?.mac ? store.mac(ticketPayload(year, rows, coursesToCreate)) : ticketPayload(year, rows, coursesToCreate);
+    const actionable = counts.new + counts.annual + counts.updates;
+    const payload = ticketPayload(user.id, templateInfo?.id, year, rows, coursesToCreate);
+    const ticket = hasNonCourseErrors || !actionable ? null : store?.mac ? store.mac(payload) : payload;
     const invalidLocations=new Set(errors.filter(error=>error.row).map(error=>`${error.sheet||''}:${error.row}`));
     return {
-      source: parsed.source || SOURCE, fileName: input.name || input.fileName || null, year, courses:courses.filter(course=>can(svc,user,'write',course.id)), rows,
+      source: parsed.source || SOURCE, fileName: input.name || input.fileName || null, year, yearContext, courses:courses.filter(course=>can(svc,user,'write',course.id)), rows,
       sheetSummaries:parsed.sheetSummaries||[],mappingTargets:parsed.mappingTargets||[],
       administrativeRows: parsed.administrativeRows || [], coursesToCreate,
       unresolvedCourses: coursesToCreate, errors, warnings, ignored: parsed.ignored || [],
-      summary: { total: rows.length, valid: errors.some(error=>!error.row)?0:Math.max(0,rows.length-invalidLocations.size), errors: errors.length, warnings: warnings.length, unresolvedCourses: coursesToCreate.length },
-      ticket, canImport: rows.length > 0 && !hasNonCourseErrors && errors.length === 0
+      summary: { total: rows.length, valid: errors.some(error=>!error.row)?0:Math.max(0,rows.length-invalidLocations.size), errors: errors.length, warnings: warnings.length, unresolvedCourses: coursesToCreate.length, ...counts },
+      ticket, canImport: actionable > 0 && errors.length === 0
     };
   };
 
   const commit = async (user, input = {}) => {
     requirePermission(svc, user, 'import');
     requirePermission(svc, user, 'write');
-    if (!Array.isArray(input.rows) || !input.rows.length || input.rows.length > MAX_ROWS) throw new SchoolImportError(`La confirmación admite entre 1 y ${MAX_ROWS} filas.`, 'ROWS_INVALID');
-    const year = Number(input.year || input.rows[0]?.year);
+    if (!Array.isArray(input.rows) || !input.rows.length || input.rows.length > MAX_ROWS || input.rows.some(row => !row || !['new','annual','match','update','review'].includes(row.review?.kind))) throw new SchoolImportError(`La confirmación admite entre 1 y ${MAX_ROWS} filas previsualizadas.`, 'ROWS_INVALID');
+    const year = parseSchoolYear(input.year ?? input.rows[0]?.year);
+    if (year === null) throw new SchoolImportError('Indique un año de matrícula válido.', 'YEAR_INVALID');
+    if(input.rows.some(row=>parseSchoolYear(row.year??row.courseYear)!==year||(row.sourceYear!=null&&parseSchoolYear(row.sourceYear)!==year)))throw new SchoolImportError('Las filas deben corresponder al año revisado de la importación.','COURSE_YEAR_MISMATCH');
+    if (input.coursesToCreate !== undefined && (!Array.isArray(input.coursesToCreate) || input.coursesToCreate.length > MAX_ROWS || input.coursesToCreate.some(course => !course || typeof course.name !== 'string'))) throw new SchoolImportError('La lista de cursos propuestos no es válida.', 'COURSES_INVALID');
     const coursesToCreate = Array.isArray(input.coursesToCreate) ? input.coursesToCreate.map(course => ({ name: asText(course.name), year: Number(course.year || year) })) : [];
-    const expectedTicket = store?.mac ? store.mac(ticketPayload(year, input.rows, coursesToCreate)) : ticketPayload(year, input.rows, coursesToCreate);
-    if (!input.ticket || input.ticket !== expectedTicket) throw new SchoolImportError('La previsualización caducó o fue modificada; vuelva a previsualizar.', 'IMPORT_TICKET_MISMATCH', 409);
-    const unresolved = input.rows.filter(row => !row.courseId);
-    if (unresolved.length) {
-      if (input.createCourses !== true) throw new SchoolImportError('Confirme explícitamente la creación de los cursos faltantes antes de importar.', 'COURSES_CONFIRMATION_REQUIRED', 409);
-      requirePermission(svc, user, 'enroll');
-      if (!user?.allCourses) throw new SchoolImportError('La creación de cursos requiere acceso autorizado a todos los cursos.', 'COURSES_ALL_SCOPE_REQUIRED', 403);
-    }
-    const templateInfo = await loadTemplateFields(store);
-    if (templateInfo?.error) throw new SchoolImportError(templateInfo.error.message, templateInfo.error.code);
-    const templateFields = templateInfo?.fields || [];
-    const existing = await existingIdentityMap(store, input.rows);
-    const seen = new Set();
-    for (const row of input.rows) {
-      validateImportData({ data: sourceData(row) }, templateFields, svc, user);
-      const keys = identityKeys(store, { ...row, data: sourceData(row) });
-      const duplicate = existing.get(`hash:${keys.hash}`) || (keys.originId && existing.get(`origin:${keys.origin}\u0000${keys.originId}`));
-      if (duplicate) throw new SchoolImportError('La identidad u origen ya existe; no se fusionan fichas automáticamente.', 'DUPLICADO_EXISTENTE', 409);
-      if (seen.has(`hash:${keys.hash}`) || (keys.originId && seen.has(`origin:${keys.origin}\u0000${keys.originId}`))) throw new SchoolImportError('La identidad u origen se repite dentro del archivo.', 'DUPLICADO_IDENTIDAD', 409);
-      seen.add(`hash:${keys.hash}`); if (keys.originId) seen.add(`origin:${keys.origin}\u0000${keys.originId}`);
-    }
+    const updateIndexes = input.updateIndexes ?? [];
+    if (!Array.isArray(updateIndexes) || updateIndexes.length > MAX_ROWS || new Set(updateIndexes).size !== updateIndexes.length || updateIndexes.some(index => !Number.isInteger(index) || input.rows[index]?.review.kind !== 'update')) throw new SchoolImportError('Seleccione solamente filas con cambios previsualizados.', 'IMPORT_SELECTION_INVALID');
+    const annualIndexes=input.annualIndexes??[];
+    if(!Array.isArray(annualIndexes)||annualIndexes.length>MAX_ROWS||new Set(annualIndexes).size!==annualIndexes.length||annualIndexes.some(index=>!Number.isInteger(index)||input.rows[index]?.review.kind!=='annual'))throw new SchoolImportError('Seleccione solamente matrículas anuales previsualizadas.','IMPORT_SELECTION_INVALID');
+    const selected = new Set([...updateIndexes,...annualIndexes]);
+    const activeRows = input.rows.filter((row, index) => row.review.kind === 'new' || selected.has(index));
+    const stale = () => new SchoolImportError('Las fichas o su disponibilidad cambiaron desde la revisión. Vuelva a previsualizar antes de confirmar.', 'IMPORT_REVIEW_STALE', 409);
     const result = await runTransaction(store, async () => {
+      const templateInfo = await loadTemplateFields(store);
+      if (templateInfo?.error) throw new SchoolImportError(templateInfo.error.message, templateInfo.error.code);
+      const templateFields = templateInfo?.fields || [];
+      const payload = ticketPayload(user.id, templateInfo?.id, year, input.rows, coursesToCreate);
+      const expectedTicket = store?.mac ? store.mac(payload) : payload;
+      if (!input.ticket || input.ticket !== expectedTicket) throw new SchoolImportError('La previsualización caducó o fue modificada; vuelva a previsualizar.', 'IMPORT_TICKET_MISMATCH', 409);
+      if (!activeRows.length) throw new SchoolImportError('No hay fichas nuevas, matrículas anuales ni actualizaciones seleccionadas.', 'IMPORT_SELECTION_EMPTY', 409);
+      if (activeRows.some(row => !row.courseId)) {
+        if (input.createCourses !== true) throw new SchoolImportError('Confirme explícitamente la creación de los cursos faltantes antes de importar.', 'COURSES_CONFIRMATION_REQUIRED', 409);
+        requirePermission(svc, user, 'enroll');
+        if (!user?.allCourses) throw new SchoolImportError('La creación de cursos requiere acceso autorizado a todos los cursos.', 'COURSES_ALL_SCOPE_REQUIRED', 403);
+      }
+      const identities = await existingIdentityMap(store, activeRows);
+      const records = await existingYearRecords(store, identities, year);
+      const annualSources = await existingAnnualSources(store, identities, records);
+      const templates = new Map(), assessments = new Map(), seen = new Set();
+      for (const row of activeRows) {
+        const candidate = { ...row, data: sourceData(row) };
+        validateImportData(candidate, templateFields, svc, user);
+        if (row.courseId && !can(svc, user, 'write', row.courseId)) throw new SchoolImportError('La cuenta no tiene acceso de edición a uno de los cursos.', 'COURSE_PERMISSION_DENIED', 403);
+        if (row.review.kind === 'annual')requirePermission(svc,user,'enroll',row.courseId||undefined);
+        if ((row.review.kind === 'update'||row.review.kind === 'annual') && row.courseId && !can(svc, user, 'read', row.courseId)) throw new SchoolImportError('La cuenta no tiene acceso de lectura a la ficha que se quiere actualizar.', 'COURSE_PERMISSION_DENIED', 403);
+        const keys = identityKeys(store, candidate), originKey = keys.originId ? `origin:${keys.origin}\u0000${keys.originId}` : null;
+        if (seen.has(`hash:${keys.hash}`) || (originKey && seen.has(originKey))) throw new SchoolImportError('La identidad u origen se repite dentro del archivo.', 'DUPLICADO_IDENTIDAD', 409);
+        seen.add(`hash:${keys.hash}`); if (originKey) seen.add(originKey);
+        const assessment = await assessRow(store, svc, user, candidate, identities, records, templates, annualSources);
+        if (JSON.stringify(assessment.review) !== JSON.stringify(row.review)) throw stale();
+        assessments.set(row, assessment);
+      }
       const courseIds = new Map();
       const createdCourses = [];
-      for (const course of coursesToCreate) {
-        if (!course.name || course.name.length > 80 || course.year < 2020 || course.year > 2100) throw new SchoolImportError('Nombre o año de curso inválido.', 'COURSE_INVALID');
+      for (const course of coursesToCreate.filter(course=>activeRows.some(row=>!row.courseId&&courseLabels(row).some(label=>courseKey(label)===courseKey(course.name))))) {
+        if (!course.name || course.name.length > 80 || parseSchoolYear(course.year)===null || course.year!==year) throw new SchoolImportError('Nombre o año de curso inválido.', 'COURSE_INVALID');
         const matching=(await dbAll(store,'SELECT id,name FROM courses WHERE year=?',course.year)).filter(item=>courseKey(item.name)===courseKey(course.name));
         if(matching.length>1)throw new SchoolImportError('Hay cursos ambiguos; asigne uno y vuelva a previsualizar.','CURSO_AMBIGUO',409);
         const existing = matching[0];
@@ -324,11 +436,10 @@ export function createSchoolImport(store, svc) {
         }
         courseIds.set(`${courseKey(course.name)}|${course.year}`, id);
       }
-      const latestTemplate = await dbGet(store, 'SELECT id FROM templates ORDER BY id DESC LIMIT 1');
-      const inserted = [];
+      const inserted = [], updated = [], annual = [];
       const pending = {students:[],records:[],revisions:[],events:[]};
       const courseCache = new Map();
-      for (const inputRow of input.rows) {
+      for (const inputRow of activeRows) {
         const data = sourceData(inputRow);
         let courseId = inputRow.courseId;
         if (!courseId) {
@@ -340,15 +451,26 @@ export function createSchoolImport(store, svc) {
         let course = courseCache.get(courseId);
         if (!course) { course = await dbGet(store, 'SELECT id,year FROM courses WHERE id=?', courseId); courseCache.set(courseId, course); }
         if (!course || Number(course.year) !== year) throw new SchoolImportError('El curso no corresponde al año de la importación.', 'COURSE_YEAR_MISMATCH');
-        validateImportData({ data }, templateFields, svc, user);
-        const identityHash = hashIdentity(store, data);
-        const studentId = randomUUID();
-        const recordId = randomUUID();
         const now = new Date().toISOString();
-        pending.students.push([studentId, identityHash, inputRow.origin || SOURCE, inputRow.originId]);
-        pending.records.push([recordId, studentId, year, courseId, latestTemplate.id, 'draft', displayName(data), 1, store.seal(data), now]);
-        pending.revisions.push([recordId, 1, user.id, now, store.seal({ year, courseId, status: 'draft', templateId: latestTemplate.id, data })]);
-        pending.events.push([recordId, 'imported', user.id, now, store.seal({ origin: inputRow.origin || SOURCE, originId: inputRow.originId })]);
+        if (inputRow.review.kind === 'update') {
+          const { record, previous, review } = assessments.get(inputRow);
+          const next = { ...previous, ...Object.fromEntries(review.changes.map(change => [change.key, change.after])) };
+          const changed = await dbRun(store, 'UPDATE records SET data=?,version=version+1,updated_at=? WHERE id=? AND version=? AND course_id=? AND year=? AND status<>?', store.seal(next), now, record.id, review.version, courseId, year, 'withdrawn');
+          if (changed.changes !== 1) throw stale();
+          pending.revisions.push([record.id, review.version + 1, user.id, now, store.seal({ year, courseId, status: record.status, templateId: review.templateId, data: next })]);
+          pending.events.push([record.id, 'import.updated', user.id, now, store.seal({ origin: inputRow.origin || SOURCE, sourceSheet: inputRow.sourceSheet, sourceRow: inputRow.rowNumber, fields: review.changes.map(change => change.key) })]);
+          updated.push(record.id);
+          continue;
+        }
+        const identityHash = hashIdentity(store, data);
+        const annualSource=inputRow.review.kind==='annual'?assessments.get(inputRow).source:null;
+        const studentId = annualSource?annualSource.student_id:randomUUID();
+        const recordId = randomUUID();
+        if(!annualSource)pending.students.push([studentId, identityHash, inputRow.origin || SOURCE, inputRow.originId]);
+        pending.records.push([recordId, studentId, year, courseId, templateInfo.id, 'draft', displayName(data), 1, store.seal(data), now]);
+        pending.revisions.push([recordId, 1, user.id, now, store.seal({ year, courseId, status: 'draft', templateId: templateInfo.id, data })]);
+        pending.events.push([recordId, annualSource?'import.annual':'imported', user.id, now, store.seal({ origin: inputRow.origin || SOURCE, originId: inputRow.originId,sourceSheet:inputRow.sourceSheet,sourceRow:inputRow.rowNumber,...(annualSource?{sourceId:annualSource.id,sourceYear:annualSource.year}:{}) })]);
+        if(annualSource)annual.push(recordId);
         inserted.push(recordId);
       }
       const columns = {students:'id,identity_hash,origin,origin_id',records:'id,student_id,year,course_id,template_id,status,name,version,data,updated_at',revisions:'record_id,version,actor,at,snapshot',events:'record_id,action,actor,at,detail'};
@@ -360,10 +482,13 @@ export function createSchoolImport(store, svc) {
           await dbRun(store, `INSERT INTO ${table}(${columns[table]}) VALUES${placeholders}`, ...chunk.flat());
         }
       }
-      await auditInTransaction(store, user.id, 'import.commit.erp', '', { count: inserted.length, year, source: SOURCE, createdCourses: createdCourses.length });
-      return { count: inserted.length, ids: inserted };
+      const origins = unique(activeRows.map(row => row.origin || SOURCE));
+      const source = origins.length === 1 ? origins[0] : 'PADRON_MIXTO';
+      const detail = { count: inserted.length + updated.length, created: inserted.length, annual: annual.length, createdStudents: inserted.length-annual.length, updated: updated.length, skipped: input.rows.length - activeRows.length };
+      await auditInTransaction(store, user.id, 'import.commit.erp', '', { ...detail, year, source, createdCourses: createdCourses.length });
+      return { ...detail, ids: [...inserted, ...updated], source };
     });
-    return { ...result, source: SOURCE, year };
+    return { ...result, year };
   };
   return { preview, commit };
 }

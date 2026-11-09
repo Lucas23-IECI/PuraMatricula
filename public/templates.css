@@ -1,0 +1,23 @@
+/* The editor keeps full draft content; these controls only change its presentation. */
+.template-layout{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(0,1.35fr);gap:24px;align-items:start}
+.template-section-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px}
+.template-section-heading h2{margin:0;font-size:20px}.template-section-heading .view-controls{margin-left:auto}
+.template-filters{margin-block:20px;padding-block:18px;border-block:1px solid var(--line)}
+.template-filter-primary{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(130px,1fr);gap:14px;align-items:end}
+.template-filters label{min-width:0;font-size:13px}.template-filters input,.template-filters select{min-width:0;width:100%;font-size:14px;min-height:44px}
+.template-filters>.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.template-filters button{font-size:13px;min-height:42px;padding:9px 12px}
+.template-more-filters{margin-top:16px}.template-more-filters>summary{font-size:13px;font-weight:600;color:var(--primary);cursor:pointer;min-height:30px}.template-more-filters>.fields{margin-top:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}
+.template-result-count{margin:16px 0 10px;color:var(--muted);font-size:12px}
+.template-collection{min-width:0;max-height:520px;overflow:auto;overscroll-behavior:contain;padding-right:4px}
+.template-collection.collection-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,235px),1fr));gap:12px;align-items:start;padding:3px 5px 5px 0}
+.template-version{gap:12px}.template-version strong,.template-question-copy strong{font-size:15px;line-height:1.5;overflow-wrap:anywhere}.template-version small,.template-question-copy small{font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.template-version-state{font-size:11px;color:var(--muted);flex:none}
+.template-collection .collection-card{min-width:0;padding:18px;border:1px solid var(--line);border-radius:6px;background:var(--paper)}
+.template-version.collection-card{display:flex;flex-direction:column;align-items:flex-start}.template-version .badge{font-size:11px;white-space:normal}
+.template-question.file-row{align-items:flex-start;gap:16px;flex-wrap:wrap}.template-question-copy{min-width:0;flex:1 1 180px}
+.template-question-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px;flex:0 1 auto;justify-content:flex-end}.template-question-actions button{font-size:12px;min-height:40px;padding:8px 11px}
+.template-question.collection-card{display:flex;flex-direction:column;gap:16px}.template-question.collection-card .template-question-copy{flex:auto}.template-question.collection-card .template-question-actions{align-self:stretch;justify-content:flex-start}
+.template-collection.collection-compact .file-row{padding-block:12px;gap:10px}.template-collection.collection-compact .template-question-copy strong,.template-collection.collection-compact .template-version strong{font-size:14px}.template-collection.collection-compact small{font-size:11px}.template-collection.collection-compact .template-question-actions button{padding:7px 9px;min-height:38px}
+.template-collection .empty{padding:24px 12px;color:var(--muted);font-size:14px;text-align:center}
+@media(max-width:1100px){.template-layout{grid-template-columns:minmax(0,1fr)}.template-collection{max-height:430px}.template-collection.collection-cards{grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))}}
+@media(max-width:600px){.template-version-panel,.template-draft-panel{padding:18px}.template-section-heading{gap:12px}.template-section-heading .view-controls{margin-left:0;width:100%}.template-filter-primary{grid-template-columns:minmax(0,1fr)}.template-question.file-row{display:block}.template-question-actions{justify-content:flex-start;margin-top:12px}.template-collection.collection-cards{grid-template-columns:minmax(0,1fr)}.template-filters button,.template-question-actions button{min-height:44px}.template-version.file-row{align-items:flex-start;flex-wrap:wrap}.template-more-filters>.fields{grid-template-columns:minmax(0,1fr)}}

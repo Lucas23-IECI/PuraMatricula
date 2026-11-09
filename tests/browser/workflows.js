@@ -3,18 +3,22 @@ async (page) => {
   const check=(value,message)=>{if(!value)throw new Error(message);};
   const results=[];
   await page.reload();
-  if(await page.getByRole('textbox',{name:'Usuario',exact:true}).count()){
+  await page.getByLabel('Usuario',{exact:true}).or(page.locator('.home-shell')).or(page.getByRole('heading',{name:'Expedientes',exact:true})).waitFor();
+  if(await page.getByLabel('Usuario',{exact:true}).count()){
     await page.getByRole('textbox',{name:'Usuario',exact:true}).fill('demo-secretaria');
-    await page.getByRole('textbox',{name:'Contraseña',exact:true}).fill('Demo-matricula-2026!');
+    await page.getByLabel('Contraseña',{exact:true}).fill('Demo-matricula-2026!');
     await page.getByRole('button',{name:'Ingresar'}).click();
   }
+  await page.locator('.home-shell').or(page.getByRole('heading',{name:'Expedientes',exact:true})).waitFor();
+  if(await page.locator('.home-shell').count())await page.getByRole('button',{name:'Ver todos los expedientes',exact:true}).click();
   await page.getByRole('heading',{name:'Expedientes',exact:true}).waitFor();
   await page.getByRole('combobox',{name:'Año escolar',exact:true}).selectOption('2026');
   if(await page.evaluate(()=>document.body.classList.contains('dark')))await page.getByRole('button',{name:'Cambiar tema claro u oscuro'}).click();
   await page.setViewportSize({width:1440,height:960});
-  check(parseInt(await page.locator('.table-foot').textContent())>=400,'Conteo de expedientes');
-  await page.getByRole('button',{name:'Siguiente',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('.table-foot')?.textContent.includes('página 2'));
+  const pager=page.locator('[data-pagination="records"]');
+  check(Number((await pager.locator('.pagination-summary>span').textContent()).match(/ de (\d+) /)?.[1])>=400,'Conteo de expedientes');
+  await pager.getByRole('button',{name:'Página siguiente',exact:true}).click();
+  await page.locator('[data-pagination="records"][data-page="2"]').waitFor();
   check((await page.locator('tbody tr').count())===25,'25 filas en segunda página');results.push('400 fichas, paginación y búsqueda');
   await page.getByRole('searchbox',{name:'Buscar estudiante'}).fill('Ejemplo 001');
   await page.waitForFunction(()=>document.querySelector('tbody')?.querySelectorAll('tr').length===1);
@@ -29,9 +33,10 @@ async (page) => {
   await page.getByRole('button',{name:'+ Nueva matrícula'}).click();
   await page.getByRole('dialog').getByLabel('Nombres',{exact:true}).fill('Navegador sintético');
   await page.getByRole('dialog').getByLabel('Apellido paterno',{exact:true}).fill('QA Browser');
+  await page.getByRole('dialog').getByRole('combobox',{name:'Curso',exact:true}).selectOption({label:'1° Básico A'});
   await page.getByRole('dialog').getByRole('combobox',{name:'Identificación',exact:true}).selectOption('Otro');
   await page.getByRole('dialog').getByLabel('Identificador',{exact:true}).fill('QA-BROWSER-'+Date.now());
-  await page.getByRole('dialog').getByRole('button',{name:'Continuar'}).click();
+  await page.getByRole('dialog').locator('button[type="submit"]').click();
   await page.getByRole('heading',{name:/QA Browser.*Navegador sintético/}).waitFor();
   await page.locator('#field-address').fill('Borrador guardado por navegador');
   await page.waitForFunction(()=>document.querySelector('#save-state')?.textContent==='Guardado · revisión 2');results.push('Alta y autoguardado');
@@ -54,7 +59,7 @@ async (page) => {
   await page.getByRole('button',{name:'Descargar',exact:true}).waitFor();results.push('Copia firmada guardada');
   await page.getByRole('button',{name:'Preparar otro año'}).click();
   await page.getByRole('dialog').getByRole('combobox',{name:'Curso y año'}).selectOption({label:'2027 · 1° Básico A'});
-  await page.getByRole('dialog').getByRole('button',{name:'Continuar'}).click();
+  await page.getByRole('dialog').locator('button[type="submit"]').click();
   await page.waitForFunction(()=>document.querySelector('#year-select')?.value==='2027');
   check((await page.locator('.stat-line strong').first().textContent())==='Borrador','Renovación no es borrador');results.push('Renovación al 2027');
   await page.getByRole('button',{name:'2026 · 1° Básico A',exact:true}).click();
@@ -63,11 +68,11 @@ async (page) => {
   await page.getByRole('button',{name:'Cambiar curso',exact:true}).click();
   await page.getByRole('dialog').getByRole('combobox',{name:'Nuevo curso'}).selectOption({label:'2° Básico A'});
   await page.getByRole('dialog').getByLabel('Motivo').fill('Traslado sintético por prueba integrada');
-  await page.getByRole('dialog').getByRole('button',{name:'Continuar'}).click();
+  await page.getByRole('dialog').locator('button[type="submit"]').click();
   await page.waitForFunction(()=>document.querySelector('.page-heading p:last-child')?.textContent.includes('2° Básico A'));
   await page.getByRole('button',{name:'Registrar retiro'}).click();
   await page.getByRole('dialog').getByLabel('Motivo').fill('Retiro sintético por prueba integrada');
-  await page.getByRole('dialog').getByRole('button',{name:'Continuar'}).click();
+  await page.getByRole('dialog').locator('button[type="submit"]').click();
   await page.waitForFunction(()=>document.querySelector('.stat-line strong')?.textContent==='Retirado');results.push('Traslado y retiro con historial');
   await page.getByRole('tab',{name:'Historial',exact:true}).click();check((await page.locator('.timeline').textContent()).includes('Retiro registrado'),'No apareció historial');
   await page.getByRole('button',{name:'Expedientes',exact:true}).click();

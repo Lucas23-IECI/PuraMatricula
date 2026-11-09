@@ -1,0 +1,11 @@
+.pagination{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px 20px;width:100%;min-width:0;padding:18px 0 4px;border-top:1px solid var(--line);margin-top:16px;color:var(--muted)}
+.pagination-summary{display:grid;gap:3px;font-size:12px;line-height:1.4}.pagination-summary small{font-size:11px;color:var(--muted)}
+.pagination-navigation{display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap;min-width:0}
+.pagination button{display:flex;align-items:center;justify-content:center;gap:8px;min-width:44px;min-height:44px;padding:8px 12px;font-size:13px;line-height:1.2;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--ink)}
+.pagination button:hover{border-color:var(--line);background:var(--soft)}.pagination button[aria-current="page"]{background:var(--primary);border-color:var(--primary);color:var(--on-primary);font-weight:700}.pagination button:disabled{opacity:.4;cursor:default}.pagination button:disabled:hover{border-color:transparent;background:transparent}
+.pagination-step>span[aria-hidden]{font-size:23px;line-height:1}.pagination-gap{padding:0 4px;color:var(--muted)}
+.pagination-size{display:flex;align-items:center;gap:9px;white-space:nowrap;font-size:11px;font-weight:500}.pagination-size select{width:70px;min-height:44px;padding:8px;font-size:13px;background:var(--paper)}
+.pagination[aria-busy="true"]{opacity:.65}.pagination[aria-busy="true"] button,.pagination[aria-busy="true"] select{pointer-events:none}
+.home-search-panel .pagination{gap:10px;margin-top:10px;padding-top:12px}.home-search-panel .pagination-summary{font-size:11px}.home-search-panel .pagination-step-text{display:none}
+@media(max-width:780px){.pagination-navigation{order:3;width:100%;justify-content:flex-start}.pagination-size{margin-left:auto}.pagination{gap:12px}}
+@media(max-width:500px){.pagination button{padding:8px;min-width:44px}.pagination-step-text,.pagination .pagination-boundary,.pagination .pagination-gap{display:none}.pagination-navigation{gap:3px;justify-content:center}.pagination-summary{font-size:11px}.pagination-summary small{font-size:10px}}

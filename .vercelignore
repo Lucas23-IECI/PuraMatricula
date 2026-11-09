@@ -4,6 +4,16 @@
 node_modules/
 data/
 test-results/
+/output/
+/tests/
+/backups/
+/certificados/
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb
+*.docx
+*.pem
 supabase/.temp/
 .env*
 *.sqlite*

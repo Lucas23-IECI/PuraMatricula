@@ -1,27 +1,56 @@
 import { randomBytes,scryptSync,createCipheriv,createDecipheriv } from 'node:crypto';
-import { readFileSync,writeFileSync,readdirSync,mkdirSync,existsSync,unlinkSync } from 'node:fs';
+import { readFileSync,writeFileSync,readdirSync,mkdirSync,existsSync,unlinkSync,lstatSync } from 'node:fs';
 import { join,resolve } from 'node:path';
 import { openStore } from './store.mjs';
 const logicalTables=['users','courses','templates','students','records','revisions','events','attachments','audit'];
+// Browser downloads use JSON/base64 and necessarily make several copies. The
+// school CLI uses backup-file.mjs instead, whose archive is processed in chunks.
+export const MAX_BACKUP_SOURCE_BYTES=32*1024*1024;
+export const MAX_LEGACY_BACKUP_BYTES=64*1024*1024;
+export class BackupLimitError extends Error{
+  constructor(){super('El respaldo supera el límite de descarga. Use el respaldo del servidor del colegio.');this.name='BackupLimitError';this.status=413;this.code='BACKUP_FILE_REQUIRED';}
+}
+export function validateBackupPassword(password){if(typeof password!=='string'||password.length<16||password.length>200)throw new Error('Use una clave de respaldo de entre 16 y 200 caracteres.');}
+function checkedFileSize(path){const info=lstatSync(path);if(!info.isFile()||info.isSymbolicLink())throw new Error('Archivo de respaldo inválido.');return info.size;}
+async function sqliteSourceSize(store,snapshot){
+  let size=snapshot?checkedFileSize(snapshot):Number((await store.db.prepare('PRAGMA page_count').get()).page_count)*Number((await store.db.prepare('PRAGMA page_size').get()).page_size);
+  const files=readdirSync(join(store.dir,'attachments')).filter(x=>/^[0-9a-f-]+\.enc$/.test(x));
+  if(files.length>10000)throw new BackupLimitError();
+  for(const name of files){size+=checkedFileSize(join(store.dir,'attachments',name));if(size>MAX_BACKUP_SOURCE_BYTES)throw new BackupLimitError();}
+  if(!Number.isSafeInteger(size)||size>MAX_BACKUP_SOURCE_BYTES)throw new BackupLimitError();
+}
+async function preflightBackup(store){
+  if(store.kind!=='postgres'){await sqliteSourceSize(store);return;}
+  let size=0;
+  for(const table of [...logicalTables,'attachment_blobs']){
+    const row=await store.db.prepare(`SELECT COALESCE(SUM(octet_length(row_to_json(t)::text)),0)::text AS bytes FROM ${table} t`).get();
+    size+=Number(row.bytes);if(!Number.isSafeInteger(size)||size>MAX_BACKUP_SOURCE_BYTES)throw new BackupLimitError();
+  }
+}
 function encryptBackup(payload,password,magic){
   const salt=randomBytes(16),iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',scryptSync(password,salt,32),iv);
   const encrypted=Buffer.concat([cipher.update(Buffer.from(JSON.stringify(payload))),cipher.final()]);
   return Buffer.concat([Buffer.from(magic),salt,iv,cipher.getAuthTag(),encrypted]);
 }
 export async function createBackup(store,password,actor='local'){
-  if(typeof password!=='string'||password.length<16||password.length>200)throw new Error('Use una clave de respaldo de entre 16 y 200 caracteres.');
+  validateBackupPassword(password);
   if(store.kind==='postgres')return store.transaction(async()=>{
+    await preflightBackup(store);
     await store.audit(actor,'backup.create','',{format:2});
     const tables={};for(const table of logicalTables)tables[table]=await store.db.prepare(`SELECT * FROM ${table} ORDER BY id`).all();
     const blobs=await store.db.prepare('SELECT * FROM attachment_blobs ORDER BY id').all();
     return encryptBackup({version:2,createdAt:new Date().toISOString(),tables,key:store.key.toString('base64'),blobs},password,'DSMBACK2');
   });
+  await preflightBackup(store);
   await store.audit(actor,'backup.create','',{});
-  const snapshot=join(store.dir,`snapshot-${randomBytes(8).toString('hex')}.sqlite`);await store.db.prepare('VACUUM INTO ?').run(snapshot);
-  let payload;try{payload=Buffer.from(JSON.stringify({version:1,createdAt:new Date().toISOString(),database:readFileSync(snapshot).toString('base64'),key:store.key.toString('base64'),attachments:readdirSync(join(store.dir,'attachments')).filter(x=>/^[0-9a-f-]+\.enc$/.test(x)).map(name=>({name,content:readFileSync(join(store.dir,'attachments',name),'utf8')}))}));}finally{unlinkSync(snapshot);}
+  const snapshot=join(store.dir,`snapshot-${randomBytes(8).toString('hex')}.sqlite`);writeFileSync(snapshot,Buffer.alloc(0),{mode:0o600,flag:'wx'});
+  let payload;try{await store.db.prepare('VACUUM INTO ?').run(snapshot);await sqliteSourceSize(store,snapshot);payload=Buffer.from(JSON.stringify({version:1,createdAt:new Date().toISOString(),database:readFileSync(snapshot).toString('base64'),key:store.key.toString('base64'),attachments:readdirSync(join(store.dir,'attachments')).filter(x=>/^[0-9a-f-]+\.enc$/.test(x)).map(name=>({name,content:readFileSync(join(store.dir,'attachments',name),'utf8')}))}));}finally{unlinkSync(snapshot);}
   const salt=randomBytes(16),iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',scryptSync(password,salt,32),iv);const encrypted=Buffer.concat([cipher.update(payload),cipher.final()]);return Buffer.concat([Buffer.from('DSMBACK1'),salt,iv,cipher.getAuthTag(),encrypted]);
 }
 export function restoreBackup(bytes,password,destination){
+  if(!(bytes instanceof Uint8Array)||bytes.byteLength>MAX_LEGACY_BACKUP_BYTES)throw new BackupLimitError();
+  if(bytes.byteLength<52||typeof password!=='string'||password.length>200)throw new Error('Formato de respaldo inválido.');
+  bytes=Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength);
   const magic=bytes.subarray(0,8).toString();if(!['DSMBACK1','DSMBACK2'].includes(magic))throw new Error('Formato de respaldo inválido.');
   const cipher=createDecipheriv('aes-256-gcm',scryptSync(password,bytes.subarray(8,24),32),bytes.subarray(24,36));cipher.setAuthTag(bytes.subarray(36,52));let content;try{content=JSON.parse(Buffer.concat([cipher.update(bytes.subarray(52)),cipher.final()]).toString());}catch{throw new Error('Clave incorrecta o respaldo alterado.');}
   if(magic==='DSMBACK2')return restoreLogicalBackup(content,destination);

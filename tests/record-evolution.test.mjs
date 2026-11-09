@@ -27,6 +27,8 @@ test('alta y edición manual conservan comunas y procedencia después de reabrir
     const saved = await f.svc.patch(admin, record.id, { version: record.version, data: { commune: 'Comuna corregida', guardianPhone: 'Teléfono corregido' } });
     assert.equal(saved.data.commune, 'Comuna corregida');
     assert.equal(saved.data.sourceAddress, data.sourceAddress);
+    await assert.rejects(() => f.svc.patch(admin, record.id, { version: saved.version, data: { sourceRow: '999' } }), error => error.status === 403 && error.code === 'SOURCE_FIELD_READ_ONLY');
+    await assert.rejects(() => f.svc.patch(admin, record.id, { version: saved.version, data: { guardianEmail: 'no es un correo' } }), error => error.status === 400 && error.code === 'INVALID_EMAIL');
     const reopened = openAsyncStore(f.directory);
     try {
       const detail = await createService(reopened).detail(admin, record.id);
@@ -138,5 +140,21 @@ test('curso equivalente por mayúsculas, acento, ordinal o espacios no se duplic
     assert.equal((await f.store.db.prepare('SELECT count(*) AS n FROM courses WHERE year=?').get(2026)).n, 2);
     const nextYear = await f.svc.createCourse(admin, { year: 2027, name: '1 BASICO A' });
     assert.equal(nextYear.year, 2027);
+  } finally { await f.close(); }
+});
+
+test('el historial no revela adjuntos invisibles a una cuenta sin acceso', async () => {
+  const f = await fixture();
+  try {
+    const record = await f.svc.create(admin, { courseId: f.course.id, year: 2026, data: student() });
+    const document = await f.svc.addAttachment(admin, record.id, { version: 1, kind: 'signed', name: 'ficha-ficticia.pdf', content: Buffer.from('%PDF-1.4\nPRUEBA\n').toString('base64') });
+    for (const permissions of [['read'], ['read','documents'], ['read','sensitive']]) {
+      const reader = { ...admin, permissions };
+      const view = await f.svc.detail(reader, record.id);
+      assert.deepEqual(view.attachments, []);
+      assert.equal(view.events.some(event => event.action === 'document.add'), false);
+      assert.ok(!JSON.stringify(view).includes(document.id));
+    }
+    assert.ok((await f.svc.detail(admin, record.id)).events.some(event => event.detail.attachmentId === document.id));
   } finally { await f.close(); }
 });

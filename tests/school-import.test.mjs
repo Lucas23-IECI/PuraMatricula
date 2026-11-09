@@ -95,6 +95,9 @@ test('acepta el padrón administrativo exportado y lo convierte si Usuarios no e
   }, { year: 2026 });
   assert.equal(result.administrativeRows.length, 2);
   assert.equal(result.rows.length, 1);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.yearContext.source, 'selection');
+  assert.deepEqual(result.yearContext.sourceYears, []);
   assert.equal(result.rows[0].identity.value, '11111111-1');
   assert.equal(result.rows[0].data.surname, 'Alex');
   assert.equal(result.rows[0].data.secondSurname, 'Gómez');
@@ -241,4 +244,83 @@ test('marca cursos que no pueden resolverse en la configuración recibida', () =
   assert.deepEqual(result.unresolvedCourses, [{ key: '3basico|2026', name: '3° Básico', year: 2026 }]);
   assert.equal(result.errors[0].code, 'CURSO_NO_RESUELTO');
   assert.equal(result.canImport, false);
+});
+
+// A school year is import provenance, never inferred from birth dates or identifiers.
+test('el año explícito de matrícula del archivo prevalece y resuelve el curso de ese año',()=>{
+  for(const header of ['Año','Periodo','Año escolar','Año matrícula','Matrícula']){
+    const result=normalizeSchoolWorkbook({'1° Básico':[[...courseHeaders,header],[...courseStudent(),2019]]},{year:2026,courses:[{id:'curso-actual',name:'1° Básico',year:2026},{id:'curso-historico',name:'1° Básico',year:2019}]});
+    assert.equal(result.errors.length,0,header);
+    assert.equal(result.yearContext.selectedYear,2026,header);assert.deepEqual(result.yearContext.sourceYears,[2019],header);
+    assert.equal(result.yearContext.resolvedYear,2019,header);assert.equal(result.yearContext.source,'file',header);assert.equal(result.yearContext.conflict,true,header);assert.ok(result.warnings.some(warning=>warning.code==='IMPORT_YEAR_CHANGED'),header);
+    assert.equal(result.rows[0].courseYear,2019,header);assert.equal(result.rows[0].courseId,'curso-historico',header);
+    assert.equal(result.rows[0].sourceYear,2019,header);assert.equal(Object.hasOwn(result.rows[0].data,'sourceYear'),false,header);
+    assert.equal(result.rows[0].sourceSheet,'1° Básico');assert.equal(result.rows[0].rowNumber,2);
+  }
+});
+
+test('títulos explícitos anteriores al encabezado conservan año, hoja y fila de origen',()=>{
+  for(const title of ['Matrícula 2019','Año escolar 2019','Periodo 2019']){
+    const result=normalizeSchoolWorkbook({'1° Básico':[[title],[],courseHeaders,courseStudent()]},{year:2026});
+    assert.equal(result.errors.length,0,title);assert.equal(result.yearContext.resolvedYear,2019,title);
+    assert.deepEqual(result.yearContext.sourceYears,[2019],title);assert.equal(result.yearContext.source,'file',title);
+    assert.equal(result.rows[0].sourceYear,2019,title);assert.equal(result.rows[0].courseYear,2019,title);
+    assert.equal(result.rows[0].rowNumber,4,title);assert.equal(result.rows[0].data.sourceRow,'4',title);
+  }
+});
+
+test('mezclar años de matrícula de estudiantes bloquea el lote completo',()=>{
+  const result=normalizeSchoolWorkbook({'1° Básico':[[...courseHeaders,'Año escolar'],[...courseStudent(),2019],[...courseStudent('11111112-K'),2020]]},{year:2026});
+  assert.equal(result.canImport,false);assert.ok(result.errors.some(error=>error.code==='IMPORT_YEARS_MIXED'));
+  assert.deepEqual(result.yearContext.sourceYears,[2019,2020]);assert.equal(result.yearContext.resolvedYear,null);assert.equal(result.yearContext.conflict,true);
+});
+
+test('año de nacimiento, identificación, nombre del archivo y encabezados parecidos no cambian el período',()=>{
+  const result=normalizeSchoolWorkbook({'1° Básico':[['Nacimiento 2018'],[...courseHeaders,'Fecha Nacimiento','Año nacimiento','Periodo de pago'],[...courseStudent(),'01/03/2018',2018,2019]]},{year:2026,fileName:'matricula-2019.xlsx'});
+  assert.equal(result.errors.length,0);assert.equal(result.yearContext.resolvedYear,2026);assert.equal(result.yearContext.source,'selection');
+  assert.deepEqual(result.yearContext.sourceYears,[]);assert.equal(result.rows[0].courseYear,2026);assert.ok(result.rows[0].sourceYear==null);
+});
+
+test('docentes, hojas excluidas y hojas administrativas auxiliares no aportan el año del lote',()=>{
+  const result=normalizeSchoolWorkbook({
+    Usuarios:[['ID de Usuario (no modificar)','Nombres','Apellidos','Rol','Curso','Año'],['docente-2018','Docente ficticio','No importar','Docente','1° Básico',2018],['alumno-2019','Alumno ficticio','Importable','Estudiante','1° Básico',2019]],
+    '2° Básico':[['Matrícula 2020'],courseHeaders,courseStudent('11111112-K')],
+    'Padrón administrativo':[['ID interno','Estudiante','Curso','Identificador principal','Documento completo','País','Periodo'],['aux-2021','Auxiliar ficticio','3° Básico','RUN chileno','11111111-1','CL',2021]]
+  },{year:2026,sheetMappings:{'2° Básico':{include:false}}});
+  assert.equal(result.errors.length,0);assert.equal(result.rows.length,1);assert.equal(result.rows[0].originId,'alumno-2019');
+  assert.deepEqual(result.yearContext.sourceYears,[2019]);assert.equal(result.yearContext.resolvedYear,2019);assert.equal(result.rows[0].courseYear,2019);
+  assert.ok(result.ignored.some(issue=>issue.code==='ROL_IGNORADO'));assert.ok(result.ignored.some(issue=>issue.code==='HOJA_EXCLUIDA'));assert.ok(result.ignored.some(issue=>issue.code==='HOJA_AUXILIAR'));
+});
+
+test('una fuente explícita inválida no se sustituye silenciosamente por la selección',()=>{
+  for(const invalid of [1949,2101,'2019/2020','Periodo 2019']){
+    const result=normalizeSchoolWorkbook({'1° Básico':[[...courseHeaders,'Año escolar'],[...courseStudent(),invalid]]},{year:2026});
+    assert.equal(result.canImport,false,String(invalid));assert.ok(result.errors.some(error=>error.code==='IMPORT_YEAR_INVALID'),String(invalid));
+  }
+});
+
+test('sin fuente de año conserva tanto la selección explícita como la ausencia de año del parser',()=>{
+  const book={'1° Básico':[courseHeaders,courseStudent()]};
+  const chosen=normalizeSchoolWorkbook(book,{year:2035});
+  assert.equal(chosen.yearContext.selectedYear,2035);assert.equal(chosen.yearContext.resolvedYear,2035);assert.equal(chosen.yearContext.source,'selection');assert.deepEqual(chosen.yearContext.sourceYears,[]);
+  const unselected=normalizeSchoolWorkbook(book);
+  assert.equal(unselected.yearContext.selectedYear,null);assert.equal(unselected.yearContext.resolvedYear,null);assert.equal(unselected.rows[0].courseYear,null);assert.equal(unselected.errors.length,0);
+});
+
+test('fuentes de período admiten texto de cuatro dígitos y los límites históricos configurados',()=>{
+  for(const sourceYear of [1950,'2019',2100]){
+    const result=normalizeSchoolWorkbook({'1° Básico':[[...courseHeaders,'Año escolar'],[...courseStudent(),sourceYear]]},{year:2026});
+    assert.equal(result.errors.length,0,String(sourceYear));assert.equal(result.yearContext.resolvedYear,Number(sourceYear));assert.equal(result.rows[0].sourceYear,Number(sourceYear));assert.equal(result.rows[0].courseYear,Number(sourceYear));
+  }
+});
+
+test('títulos con identificadores o períodos ajenos no adivinan el año y los rangos declarados se rechazan',()=>{
+  for(const title of ['Número matrícula 2019','ID matrícula 2019','Periodo de pago 2019','Código IPE 2019']){
+    const result=normalizeSchoolWorkbook({'1° Básico':[[title],courseHeaders,courseStudent()]},{year:2026});
+    assert.equal(result.errors.length,0,title);assert.equal(result.yearContext.resolvedYear,2026,title);assert.equal(result.yearContext.source,'selection',title);
+  }
+  for(const title of ['Matrícula 2019/2020','Año escolar 1949','Periodo 2101']){
+    const result=normalizeSchoolWorkbook({'1° Básico':[[title],courseHeaders,courseStudent()]},{year:2026});
+    assert.equal(result.canImport,false,title);assert.equal(result.yearContext.resolvedYear,null,title);assert.ok(result.errors.some(error=>error.code==='IMPORT_YEAR_INVALID'),title);
+  }
 });
