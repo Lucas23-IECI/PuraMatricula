@@ -10,7 +10,7 @@ Sin HTTPS institucional, ejecute Matrícula en Docker **solo en el PC servidor**
 
 Antes de incorporar estudiantes, cree un respaldo inicial. En **Organización → Importación** seleccione el año escolar, previsualice el Excel, compruebe el destino de cada hoja y resuelva filas observadas. Solo la confirmación escribe en el volumen. Las altas entran como borradores; las coincidencias y los cambios a fichas existentes se revisan por separado. No se importan usuarios ni contraseñas desde el Excel.
 
-Este repositorio contiene fuentes; el paquete offline se distribuye por separado. La entrega fue verificada localmente con Docker y datos sintéticos en un volumen descartable. No incluye el padrón, una base de demostración, respaldos ni las credenciales de la instalación escolar.
+El [instalador para Windows](https://github.com/Lucas23-IECI/PuraMatricula/releases/latest/download/PuraMatricula-Instalador-Windows.zip) incluye la imagen Docker. Extraiga todo el ZIP, abra Docker Desktop y haga doble clic en **INSTALAR MATRICULA**. La entrega se verifica con Docker y datos sintéticos en un volumen descartable. No incluye el padrón, una base de demostración, respaldos ni credenciales. Consulte [cómo generar y adaptar la entrega](docs/ENTREGA-REUTILIZABLE.md).
 
 ## Alumnos y archivos con formatos distintos
 

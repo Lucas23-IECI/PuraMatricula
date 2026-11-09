@@ -8,7 +8,7 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const rootFiles = new Set(['package.json', 'package-lock.json', 'Dockerfile', '.dockerignore', 'docker.env.example', 'README.md', 'AGENTS.md', 'LICENSE', 'LICENSE.md']);
 const publicExtensions = new Set(['.html', '.js', '.css', '.jpg', '.jpeg', '.png', '.svg', '.ico', '.webp', '.woff', '.woff2']);
 const scriptExtensions = new Set(['.mjs', '.ps1', '.sh']);
-const documents = new Set(['DOCKER-COLEGIO.md', 'RECURSOS-VISUALES.md', 'ANIOS-ESCOLARES.md', 'SEGURIDAD.md', 'VERIFICACION.md', 'SERVIDOR-COLEGIO.md']);
+const documents = new Set(['DOCKER-COLEGIO.md', 'RECURSOS-VISUALES.md', 'ANIOS-ESCOLARES.md', 'SEGURIDAD.md', 'VERIFICACION.md', 'SERVIDOR-COLEGIO.md', 'ENTREGA-REUTILIZABLE.md', 'ABRIR-PRIMERO-WINDOWS.md']);
 const excludedApiDirectory = /^(?:__)?(?:fixtures?|tests?|specs?)(?:__)?$/i;
 const excludedApiFile = /(?:^|[._-])(?:fixtures?|tests?|specs?|private|secrets?|credentials)(?:[._-]|$)/i;
 const excludedDirectories = new Set(['node_modules', 'output', 'backups', 'backup', 'data', 'storage', 'attachments', 'logs', 'private', 'secrets', 'credentials', 'certs', 'certificates', 'tls']);
@@ -46,7 +46,7 @@ function allowedFile(path) {
   const extension = extname(path).toLowerCase();
   if (parts[0] === 'api') return extension === '.mjs' && !parts.some(part => excludedApiDirectory.test(part)) && !excludedApiFile.test(parts.at(-1));
   if (parts[0] === 'src') return extension === '.mjs';
-  if (parts[0] === 'scripts') return scriptExtensions.has(extension);
+  if (parts[0] === 'scripts') return scriptExtensions.has(extension) || path === 'scripts/instalar-matricula.cmd';
   if (parts[0] === 'public') return publicExtensions.has(extension);
   return parts.length === 2 && parts[0] === 'docs' && documents.has(parts[1]);
 }

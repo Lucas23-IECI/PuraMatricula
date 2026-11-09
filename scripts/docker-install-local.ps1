@@ -15,7 +15,7 @@ try {
     $target = [IO.Path]::GetFullPath($Destino)
     if (Test-Path -LiteralPath $target) { throw 'El destino ya existe. Para una instalacion anterior use su asistente y conserve su volumen.' }
     $release = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ENTREGA.json') -Raw | ConvertFrom-Json
-    if ($release.mode -cne 'local' -or $release.image -notmatch '^puramatricula:0\.2\.0-local-[0-9]{8}t[0-9]{9}z$') { throw 'Esta no es una entrega local de PuraMatricula.' }
+    if ($release.mode -cne 'local' -or $release.image -cnotmatch '^puramatricula:\d+\.\d+\.\d+-local-[0-9]{8}t[0-9]{9}z$') { throw 'Esta no es una entrega local de PuraMatricula.' }
     # The classic image store reports the config digest; containerd reports
     # the manifest digest. Both must come from the same verified image archive.
     $imageIds = @($release.imageId)
@@ -32,7 +32,9 @@ try {
     $zip = Confirm-Artifact $release.zip $release.zipSha256
     $tar = Confirm-Artifact $release.tar $release.tarSha256
     $config = Confirm-Artifact 'docker.local.env' $release.configSha256
-    $docker = (Get-Command docker -ErrorAction Stop).Source
+    $dockerCommand = Get-Command docker -ErrorAction SilentlyContinue
+    if (-not $dockerCommand) { throw 'No se encontro Docker. Abre Docker Desktop y comprueba que este instalado en este PC.' }
+    $docker = $dockerCommand.Source
     $engine = & $docker version --format '{{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}'
     if ($LASTEXITCODE -ne 0 -or $engine -notmatch '^(\d+)\.\S+\s+linux/amd64$' -or [int]$Matches[1] -lt 28) { throw 'Se requiere el motor local Docker Engine 28 o posterior, Linux amd64. Compruebe Docker Desktop.' }
     $endpoint = if (-not $env:DOCKER_CONTEXT -and $env:DOCKER_HOST) { $env:DOCKER_HOST } else { & $docker context inspect --format '{{.Endpoints.docker.Host}}' }
