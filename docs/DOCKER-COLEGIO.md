@@ -63,6 +63,8 @@ sh scripts/docker-colegio.sh init --use-image
 
 Esta opción comprueba con `docker image inspect` que la imagen configurada ya esté disponible, solicita la cuenta inicial y valida el arranque. No ejecuta `build`, `pull` ni `npm ci`; por tanto no requiere red para instalar las dependencias de la aplicación. Si falta la imagen, se detiene en lugar de buscarla remotamente. Docker y su motor deben estar instalados y listos previamente; el acceso entre el servidor y los PC clientes sigue requiriendo la LAN.
 
+La imagen incluida en la entrega local usa el formato Docker para una sola plataforma, Linux amd64, sin attestations. El instalador comprueba el SHA-256 del TAR antes de cargarlo y admite el identificador de manifiesto o de configuración declarado para ese mismo archivo. Así no depende del [almacén clásico o containerd](https://docs.docker.com/engine/storage/containerd/) que use el equipo; no hace falta cambiar el almacén de Docker Desktop.
+
 La opción de imagen local corresponde solo a `init`. `update` conserva su procedimiento normal de respaldo y construcción; no incorpora una actualización offline automática.
 
 ## Primer día sin certificado: modo local

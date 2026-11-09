@@ -16,6 +16,12 @@ try {
     if (Test-Path -LiteralPath $target) { throw 'El destino ya existe. Para una instalacion anterior use su asistente y conserve su volumen.' }
     $release = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ENTREGA.json') -Raw | ConvertFrom-Json
     if ($release.mode -cne 'local' -or $release.image -notmatch '^puramatricula:0\.2\.0-local-[0-9]{8}t[0-9]{9}z$') { throw 'Esta no es una entrega local de PuraMatricula.' }
+    # The classic image store reports the config digest; containerd reports
+    # the manifest digest. Both must come from the same verified image archive.
+    $imageIds = @($release.imageId)
+    $configId = $release.PSObject.Properties['imageConfigId']
+    if ($configId) { $imageIds += [string]$configId.Value }
+    if (@($imageIds | Where-Object { $_ -cnotmatch '^sha256:[a-f0-9]{64}$' }).Count) { throw 'La identidad de la imagen no es valida.' }
 
     function Confirm-Artifact([string]$Name,[string]$Hash) {
         if ($Name -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]*$' -or $Hash -notmatch '^[a-f0-9]{64}$') { throw 'Nombre o huella de artefacto no valido.' }
@@ -42,7 +48,7 @@ try {
     & $docker image load --input $tar
     if ($LASTEXITCODE -ne 0) { throw 'Docker no pudo cargar la imagen.' }
     $id = & $docker image inspect --format '{{.Id}}' $release.image
-    if ($LASTEXITCODE -ne 0 -or $id -cne $release.imageId) { throw 'La imagen cargada no coincide con la entrega.' }
+    if ($LASTEXITCODE -ne 0 -or $imageIds -cnotcontains $id) { throw 'La imagen cargada no coincide con la entrega.' }
 
     Expand-Archive -LiteralPath $zip -DestinationPath $target
     $envText = (Get-Content -LiteralPath $config -Raw).Replace('MATRICULA_LOCAL_PORT=4319','MATRICULA_LOCAL_PORT='+$Puerto)
