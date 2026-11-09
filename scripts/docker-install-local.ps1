@@ -3,7 +3,8 @@ param(
     [string]$Destino = 'C:\PuraMatricula',
     [ValidateRange(1024, 65535)]
     [int]$Puerto = 4319,
-    [switch]$SoloPreparar
+    [switch]$SoloPreparar,
+    [switch]$SinAccesoDirecto
 )
 
 Set-StrictMode -Version Latest
@@ -45,6 +46,11 @@ try {
 
     Expand-Archive -LiteralPath $zip -DestinationPath $target
     $envText = (Get-Content -LiteralPath $config -Raw).Replace('MATRICULA_LOCAL_PORT=4319','MATRICULA_LOCAL_PORT='+$Puerto)
+    $iconPath = Join-Path $target 'public\escudo.ico'
+    if ($iconPath -match '^[A-Za-z]:\\[^''\x00-\x1f\x7f]+$' -and (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
+        $newline = [Environment]::NewLine
+        $envText = $envText.TrimEnd([char[]]@(13, 10)) + $newline + "MATRICULA_DESKTOP_ICON='$iconPath'" + $newline
+    }
     [IO.File]::WriteAllText((Join-Path $target 'docker.env'), $envText, (New-Object Text.UTF8Encoding($false)))
     Write-Host "Archivos preparados en $target"
     $assistant = Join-Path $target 'scripts\docker-colegio.ps1'
@@ -56,7 +62,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'La inicializacion no termino. Consulte ABRIR-PRIMERO.md antes de repetirla.' }
     & $assistant check
     if ($LASTEXITCODE -ne 0) { throw 'El asistente no pudo confirmar el acceso.' }
-    Write-Host "Abra http://127.0.0.1:$Puerto/ en este PC y cambie su contrasena temporal."
+    if (-not $SinAccesoDirecto) {
+        try {
+            $shortcut = & (Join-Path $target 'scripts\crear-acceso-directo.ps1') -Puerto $Puerto
+            Write-Host "Acceso directo creado: $shortcut"
+        } catch {
+            Write-Warning 'No se pudo crear el acceso directo en este Escritorio. La aplicacion quedo instalada; puede volver a crearlo con scripts\crear-acceso-directo.ps1.'
+        }
+    }
+    Write-Host "Abra http://matricula.localhost:$Puerto/ en este PC y cambie su contrasena temporal."
+    Write-Host "Si el navegador no abre ese nombre, use http://127.0.0.1:$Puerto/."
 } catch {
     Write-Error $_.Exception.Message
     exit 1

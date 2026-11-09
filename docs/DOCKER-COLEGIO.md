@@ -72,7 +72,11 @@ Use la entrega que incluye `compose.local.yaml`. En el servidor, con Docker Engi
     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\docker-colegio.ps1 init -Mode local -UseImage
     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\docker-colegio.ps1 check
 
-Abra **http://127.0.0.1:4319/** en el mismo PC servidor. El asistente pide el nombre de usuario y una clave temporal oculta. Al entrar, cámbiela y cree las cuentas individuales que usarán Matrícula. Si ya se inicializó la base, utilice `start` y `check`, en vez de repetir `init`. Si el puerto está ocupado, cambie `MATRICULA_LOCAL_PORT` a otro puerto libre y utilice esa misma dirección; si la base ya se inicializó, utilice `start`.
+Abra **http://matricula.localhost:4319/** en el navegador del mismo PC servidor. Si el navegador no resuelve el nombre, use `http://127.0.0.1:4319/`. Ambos llegan al mismo servicio y a la misma base. El asistente pide el nombre de usuario y una clave temporal oculta. Al entrar, cámbiela y cree las cuentas individuales que usarán Matrícula. Si ya se inicializó la base, utilice `start` y `check`, en vez de repetir `init`. Si el puerto está ocupado, cambie `MATRICULA_LOCAL_PORT` a otro puerto libre y utilice esa misma dirección; si la base ya se inicializó, utilice `start`.
+
+El instalador deja un acceso directo con el escudo en el escritorio de la cuenta de Windows que lo ejecuta. Para otra cuenta del mismo PC, la persona puede descargar desde el ingreso un ZIP con el acceso directo, extraerlo y moverlo a su escritorio. También puede ejecutar `scripts\crear-acceso-directo.ps1` desde su cuenta; la opción `-UsarIP` crea el acceso con la dirección alternativa. No se instalan aplicaciones en el navegador ni se modifica DNS.
+
+En el ingreso, **Recordar mi usuario en este equipo** guarda solo el nombre de usuario durante 30 días desde que se elige al ingresar. Es opcional, se puede desmarcar y depende del navegador y la dirección que se use. No guarda la contraseña ni amplía la duración de la sesión. En un equipo compartido, mantenga la opción desmarcada.
 
 El puerto se publica exclusivamente en `127.0.0.1` sobre una red Docker dedicada. No abra reglas de firewall, no configure reenvío de puertos y no use la IP del servidor para este modo. Docker Engine anterior a 28 no es apto para este perfil: [Docker documenta la limitación](https://docs.docker.com/engine/network/port-publishing/).
 

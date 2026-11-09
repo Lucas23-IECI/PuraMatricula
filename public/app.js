@@ -51,10 +51,45 @@ function dialog(title,html,onSubmit){
     finally{submitting=false;closeButtons.forEach(control=>control.disabled=false);setBusy(button,false);}
   };
 }
+const rememberedUserStorageKey='matricula:remembered-user:v1',rememberedUserTtl=30*24*60*60*1000;
+const validRememberedUsername=username=>typeof username==='string'&&/^[a-z0-9._-]{3,60}$/.test(username);
+function forgetRememberedUsername(){
+  try{localStorage.removeItem(rememberedUserStorageKey);}catch{}
+}
+function readRememberedUsername(){
+  try{
+    const value=localStorage.getItem(rememberedUserStorageKey);
+    if(value===null)return '';
+    const entry=JSON.parse(value),now=Date.now();
+    if(entry&&!Array.isArray(entry)&&Object.keys(entry).sort().join(',')==='expiresAt,username'&&validRememberedUsername(entry.username)&&Number.isSafeInteger(entry.expiresAt)&&entry.expiresAt>now&&entry.expiresAt<=now+rememberedUserTtl)return entry.username;
+  }catch{}
+  forgetRememberedUsername();
+  return '';
+}
+function rememberLoginUsername(username){
+  if(!validRememberedUsername(username)||readRememberedUsername()===username)return;
+  try{localStorage.setItem(rememberedUserStorageKey,JSON.stringify({username,expiresAt:Date.now()+rememberedUserTtl}));}catch{}
+}
 function login(demo=false){
   EnrollmentLoading.clearRoute();
-  $('#app').innerHTML=`<main class="login"><section class="login-story"><p class="eyebrow">Colegio Domingo Santa María</p><h1>Cada estudiante.<br>Su historia, al día.</h1><p>Un espacio de trabajo para organizar la matrícula, actualizar las fichas y acompañar cada año escolar.</p></section><section class="login-form-area"><form id="login" class="login-form"><div class="brand"><img class="brand-crest" src="/escudo.jpg" width="54" height="54" alt=""><div><strong>Liceo Domingo Santa María</strong><span>Concepción · Matrícula</span></div></div><div class="login-heading"><h1>Bienvenido/a</h1>${helpControl()}</div><p class="muted">Ingresa con tu cuenta individual del colegio.</p>${demo?'<div class="callout">Demostración local · datos sintéticos.<br>Cuenta: demo-secretaria<br>Clave de prueba: Demo-matricula-2026!</div>':''}<label>Usuario<input name="username" autocomplete="username" required autofocus></label>${passwordField('login-password','Contraseña','autocomplete="current-password" required')}<div id="login-error" class="error-text" role="alert"></div><button class="primary" type="submit">Ingresar</button><p class="muted">El acceso a cada curso y a los antecedentes reservados depende de tus permisos.</p></form></section></main>`;
-  $('#login').onsubmit=async e=>{e.preventDefault();const fd=new FormData(e.target),b=e.submitter;setBusy(b,true,'Ingresando…');try{const result=await api('/api/login',{method:'POST',body:Object.fromEntries(fd)});state.user=result.user;state.csrf=result.csrf;state.demo=result.demo;await init();}catch(error){if(state.user)renderStartupError(error);else if($('#login-error'))$('#login-error').textContent=error.message;else notice(error.message);}finally{setBusy(b,false);}};
+  const remembered=readRememberedUsername();
+  $('#app').innerHTML=`<main class="login"><section class="login-story"><p class="eyebrow">Colegio Domingo Santa María</p><h1>Cada estudiante.<br>Su historia, al día.</h1><p>Un espacio de trabajo para organizar la matrícula, actualizar las fichas y acompañar cada año escolar.</p></section><section class="login-form-area"><form id="login" class="login-form"><div class="brand"><img class="brand-crest" src="/escudo.jpg" width="54" height="54" alt=""><div><strong>Liceo Domingo Santa María</strong><span>Concepción · Matrícula</span></div></div><div class="login-heading"><h1>Bienvenido/a</h1>${helpControl()}</div><p class="muted">Ingresa con tu cuenta individual del colegio.</p>${demo?'<div class="callout">Demostración local · datos sintéticos.<br>Cuenta: demo-secretaria<br>Clave de prueba: Demo-matricula-2026!</div>':''}<label>Usuario<input name="username" autocomplete="username" required ${remembered?'':'autofocus'}></label>${passwordField('login-password','Contraseña','autocomplete="current-password" required'+(remembered?' autofocus':''))}<label class="login-remember"><input id="login-remember-username" type="checkbox" aria-describedby="login-remember-hint" ${remembered?'checked':''}><span>Recordar mi usuario en este equipo<small id="login-remember-hint">Por 30 días. La aplicación no guarda tu contraseña.</small></span></label><div id="login-error" class="error-text" role="alert"></div><button class="primary" type="submit">Ingresar</button>${document.body.dataset.desktopShortcut==='true'?'<p class="login-shortcut"><a href="/acceso-escritorio.zip" download="PuraMatricula-acceso.zip">Descargar acceso directo</a></p>':''}<p class="muted">El acceso a cada curso y a los antecedentes reservados depende de tus permisos.</p></form></section></main>`;
+  const form=$('#login'),remember=$('#login-remember-username');
+  form.elements.username.value=remembered;
+  remember.onchange=()=>{if(!remember.checked)forgetRememberedUsername();};
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const fd=new FormData(form),b=e.submitter;
+    setBusy(b,true,'Ingresando…');
+    try{
+      const result=await api('/api/login',{method:'POST',body:{username:fd.get('username'),password:fd.get('password')}});
+      if(remember.checked)rememberLoginUsername(result.user.username);
+      else forgetRememberedUsername();
+      state.user=result.user;state.csrf=result.csrf;state.demo=result.demo;
+      await init();
+    }catch(error){if(state.user)renderStartupError(error);else if($('#login-error'))$('#login-error').textContent=error.message;else notice(error.message);}
+    finally{setBusy(b,false);}
+  };
 }
 const viewPermissions={home:null,students:'read',followup:'read',organization:['enroll','import','admin'],administration:['admin','audit','backup'],records:'read',pending:'read',reports:'read',courses:'enroll',users:'admin',templates:'admin',import:'import',audit:'audit',backup:'backup'};
 function viewAllowed(view){const permission=viewPermissions[view];return view==='home'||Boolean(permission&&(Array.isArray(permission)?permission.some(can):can(permission)));}

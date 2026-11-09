@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname,join,resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { zipSync } from 'fflate';
 import { hashPassword,digest } from './store.mjs';
 import { openAsyncStore } from './async-sqlite.mjs';
 import { createService,HttpError,fail,pageWindow,schoolYearRange } from './service.mjs';
@@ -29,7 +30,7 @@ async function jsonBody(req,maxBytes=8*1024*1024){
   if(!value||typeof value!=='object'||Array.isArray(value))fail(400,'Use un objeto JSON para esta solicitud.');
   req[parsedJson]=value;return value;
 }
-export async function createApp({directory=join(root,'.local','manual'),demo=false,tls,origin,host='127.0.0.1',store:injectedStore,secure=false,localOnly=false}={}){
+export async function createApp({directory=join(root,'.local','manual'),demo=false,tls,origin,host='127.0.0.1',store:injectedStore,secure=false,localOnly=false,desktopIcon}={}){
   const secureCookies=Boolean(tls||secure),sessionCookie=localOnly?'matricula_local_session':'matricula_session';
   const localOrigin=typeof origin==='string'&&/^http:\/\/127\.0\.0\.1:([1-9]\d{3,4})$/.exec(origin);
   if(localOnly&&(!localOrigin||Number(localOrigin[1])<1024||Number(localOrigin[1])>65535||secureCookies||demo))throw new Error('El modo local requiere un origen HTTP de loopback explícito y su publicación local en Docker.');
@@ -47,7 +48,10 @@ export async function createApp({directory=join(root,'.local','manual'),demo=fal
   const pruneLoginAttempts=now=>{if(attempts.size<5000)return;for(const [key,value] of attempts){if(value.until<=now)attempts.delete(key);if(attempts.size<5000)break;}if(attempts.size>=5000){const first=attempts.keys().next().value;if(first!==undefined)attempts.delete(first);}};
   if(!await store.verifyAudit()){if(ownStore)await store.close();throw new Error('La cadena de auditoría está alterada.');}
   const originUrl=origin?new URL(origin):null;
-  const allowedHosts=originUrl?new Set([originUrl.host,...(localOnly?[]:String(process.env.MATRICULA_ALLOWED_HOSTS||'').split(',').map(x=>x.trim()).filter(Boolean))]):null;
+  const allowedHosts=originUrl?new Set([originUrl.host,...(localOnly?[`matricula.localhost:${originUrl.port}`]:String(process.env.MATRICULA_ALLOWED_HOSTS||'').split(',').map(x=>x.trim()).filter(Boolean))]):null;
+  // The Windows installer supplies a local drive path. Never accept UNC paths,
+  // line breaks or untrusted request parameters in an Internet Shortcut.
+  const shortcutIcon=localOnly&&typeof desktopIcon==='string'&&desktopIcon.length<=400&&/^[A-Z]:\\(?:[^\\/:*?"<>|\x00-\x1f]+\\)*public\\escudo\.ico$/i.test(desktopIcon)&&!desktopIcon.split('\\').some(segment=>segment==='.'||segment==='..')?desktopIcon:null;
   const coreHandler=async(req,res)=>{
     res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-DNS-Prefetch-Control','off');res.setHeader('X-Permitted-Cross-Domain-Policies','none');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=(), payment=()');res.setHeader('Cross-Origin-Opener-Policy','same-origin');res.setHeader('Cross-Origin-Resource-Policy','same-origin');res.setHeader('X-Frame-Options','DENY');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'");
     if(secureCookies)res.setHeader('Strict-Transport-Security','max-age=31536000');
@@ -61,6 +65,12 @@ export async function createApp({directory=join(root,'.local','manual'),demo=fal
       if(req.headers.origin&&req.headers.origin!==expectedOrigin)fail(403,'Origen no autorizado.');
       url=new URL(req.url,expectedOrigin);const path=url.pathname,method=req.method;
       if(localOnly&&path.startsWith('/api/')&&['cross-site','same-site'].includes(req.headers['sec-fetch-site']))fail(403,'Origen no autorizado.');
+      if(path==='/acceso-escritorio.zip'&&['GET','HEAD'].includes(method)){
+        if(!shortcutIcon)fail(404,'Acceso directo no disponible.');
+        const contents=Buffer.from(`\uFEFF[InternetShortcut]\r\nURL=${expectedOrigin}/\r\nIconFile=${shortcutIcon}\r\nIconIndex=0\r\n`,'utf16le');
+        const archive=zipSync({'PuraMatricula.url':contents,'LEEME.txt':Buffer.from('Extrae PuraMatricula.url y muevelo a tu Escritorio. El escudo usa la carpeta instalada de Matricula; conserva esa carpeta. Este acceso abre Matricula desde el mismo PC servidor.\r\n','utf8')});
+        binary(method==='HEAD'?undefined:archive,'application/zip','PuraMatricula-acceso.zip');return;
+      }
       // Read bounded network input before the SQLite queue: an unfinished body
       // must not keep every other user's database request waiting behind it.
       if(path.startsWith('/api/')&&!['GET','HEAD'].includes(method)&&isJson(req)){
@@ -151,7 +161,7 @@ export async function createApp({directory=join(root,'.local','manual'),demo=fal
         fail(404,'Ruta no encontrada.');
       }
       if(method!=='GET'&&method!=='HEAD')fail(405,'Método no permitido.');
-      const files={'/view-controls.js':'view-controls.js','/view-controls.css':'view-controls.css','/collections.js':'collections.js','/collections.css':'collections.css','/import-preview.css':'import-preview.css','/templates.css':'templates.css','/record-views.js':'record-views.js','/record-views.css':'record-views.css','/areas.js':'areas.js','/records-view.js':'records-view.js','/records.css':'records.css','/workspace.css':'workspace.css','/home-students.jpg':'home-students.jpg','/home-followup.jpg':'home-followup.jpg','/home-organization.jpg':'home-organization.jpg','/home-admin.jpg':'home-admin.jpg','/pagination.js':'pagination.js','/pagination.css':'pagination.css','/home-creative.css':'home-creative.css','/import-preview.js':'import-preview.js','/loading.js':'loading.js','/loading.css':'loading.css','/help.css':'help.css','/':'index.html','/app.js':'app.js','/help.js':'help.js','/reports.js':'reports.js','/reports.css':'reports.css','/accounts.js':'accounts.js','/templates.js':'templates.js','/style.css':'style.css','/escudo.jpg':'escudo.jpg','/favicon.ico':'escudo.jpg'};if(!files[path])fail(404,'Página no encontrada.');const filename=files[path];res.setHeader('Content-Type',filename.endsWith('.js')?'text/javascript; charset=utf-8':filename.endsWith('.css')?'text/css; charset=utf-8':filename.endsWith('.jpg')?'image/jpeg':'text/html; charset=utf-8');res.end(readFileSync(join(root,'public',filename)));
+      const files={'/view-controls.js':'view-controls.js','/view-controls.css':'view-controls.css','/collections.js':'collections.js','/collections.css':'collections.css','/import-preview.css':'import-preview.css','/templates.css':'templates.css','/record-views.js':'record-views.js','/record-views.css':'record-views.css','/areas.js':'areas.js','/records-view.js':'records-view.js','/records.css':'records.css','/workspace.css':'workspace.css','/home-students.jpg':'home-students.jpg','/home-followup.jpg':'home-followup.jpg','/home-organization.jpg':'home-organization.jpg','/home-admin.jpg':'home-admin.jpg','/pagination.js':'pagination.js','/pagination.css':'pagination.css','/home-creative.css':'home-creative.css','/import-preview.js':'import-preview.js','/loading.js':'loading.js','/loading.css':'loading.css','/help.css':'help.css','/':'index.html','/app.js':'app.js','/help.js':'help.js','/reports.js':'reports.js','/reports.css':'reports.css','/accounts.js':'accounts.js','/templates.js':'templates.js','/style.css':'style.css','/escudo.jpg':'escudo.jpg','/favicon.ico':'escudo.ico','/escudo.ico':'escudo.ico'};if(!files[path])fail(404,'Página no encontrada.');const filename=files[path];res.setHeader('Content-Type',filename.endsWith('.js')?'text/javascript; charset=utf-8':filename.endsWith('.css')?'text/css; charset=utf-8':filename.endsWith('.jpg')?'image/jpeg':filename.endsWith('.ico')?'image/x-icon':'text/html; charset=utf-8');const bytes=readFileSync(join(root,'public',filename));res.end(method==='HEAD'?undefined:filename==='index.html'&&shortcutIcon?bytes.toString('utf8').replace('<body>','<body data-desktop-shortcut="true">'):bytes);
       });
     }catch(e){
       let status=e instanceof HttpError||e instanceof SchoolImportError?e.status||400:500,message=e instanceof HttpError||e instanceof SchoolImportError?e.message:'No fue posible completar la operación.';

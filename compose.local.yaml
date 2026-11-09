@@ -21,6 +21,7 @@ services:
       MATRICULA_PORT: "4318"
       MATRICULA_ORIGIN: http://127.0.0.1:${MATRICULA_LOCAL_PORT:-4319}
       MATRICULA_TRANSPORT: local
+      MATRICULA_DESKTOP_ICON: ${MATRICULA_DESKTOP_ICON:-}
     ports:
       - target: 4318
         published: "${MATRICULA_LOCAL_PORT:-4319}"

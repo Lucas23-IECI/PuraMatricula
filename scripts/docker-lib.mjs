@@ -35,7 +35,7 @@ export function dockerConfig(env=process.env,{checkFiles=true}={}){
     for(const key of ['MATRICULA_TLS_CERT','MATRICULA_TLS_KEY'])if(!env[key]||!isAbsolute(env[key]))throw Error(`${key} debe ser la ruta absoluta del PEM montado de solo lectura.`);
     if(checkFiles)return {...schoolConfig({...env,MATRICULA_HOST:host,MATRICULA_PORT:String(port),MATRICULA_ORIGIN:origin}),secure:true,transport};
   }
-  return {origin,directory:resolve(directory),port,host,secure:transport!=='local',localOnly:transport==='local',transport};
+  return {origin,directory:resolve(directory),port,host,secure:transport!=='local',localOnly:transport==='local',transport,...(transport==='local'?{desktopIcon:env.MATRICULA_DESKTOP_ICON}:{})};
 }
 export function requireEmptyDirectory(directory){
   if(!directory||!isAbsolute(directory))throw Error('Use una carpeta absoluta y exclusiva para Matrícula.');

@@ -62,13 +62,26 @@ test('Compose local fija el puerto en loopback y no conecta redes ni monta certi
 test('inicio local usa un origen exacto, cookie propia, y rechaza hosts y solicitudes cruzadas',async t=>{
   const directory=join(temporary(t),'local'),secret=password(),port=await availablePort(),origin='http://127.0.0.1:'+port;
   await initializeDockerData({directory,username:'local-admin',password:secret});
-  const env={...environment(directory),MATRICULA_BEHIND_TLS_PROXY:undefined,MATRICULA_TRANSPORT:'local',MATRICULA_ORIGIN:origin,MATRICULA_PORT:String(port)};
+  const env={...environment(directory),MATRICULA_BEHIND_TLS_PROXY:undefined,MATRICULA_TRANSPORT:'local',MATRICULA_ORIGIN:origin,MATRICULA_PORT:String(port),MATRICULA_DESKTOP_ICON:'C:\\PuraMatricula\\public\\escudo.ico'};
   for(const invalid of ['http://192.0.2.25:'+port,'https://127.0.0.1:'+port,'http://localhost:'+port,origin+'/','http://127.0.0.1:65536'])assert.throws(()=>dockerConfig({...env,MATRICULA_ORIGIN:invalid}),/Modo local/);
   await assert.rejects(createApp({host:'0.0.0.0',origin}),/HTTPS/);
   const app=await startDocker(env);
   try{
     assert.deepEqual(await checkDockerHealth(env),{ok:true,application:'matricula'});
+    const alias='matricula.localhost:'+port;
+    assert.equal((await requestJson(origin+'/api/health',{headers:{Host:alias,Origin:'http://'+alias}})).status,200);
+    assert.equal((await requestJson(origin+'/api/health',{headers:{Host:alias,Origin:origin}})).status,403);
+    assert.equal((await requestJson(origin+'/api/health',{headers:{Host:'otro.localhost:'+port}})).status,403);
     assert.equal((await requestJson(origin+'/api/health',{headers:{Host:'localhost:'+port}})).status,403);
+    function getFile(path,headers={}){
+      return new Promise((done,reject)=>http.get(origin+path,{headers},res=>{
+        const chunks=[];res.on('data',chunk=>chunks.push(chunk));res.on('end',()=>done({bytes:Buffer.concat(chunks),headers:res.headers,status:res.statusCode}));
+      }).on('error',reject));
+    }
+    const shortcut=await getFile('/acceso-escritorio.zip?url=https://example.invalid',{Host:alias});
+    assert.equal(shortcut.status,200);assert.match(shortcut.headers['content-disposition'],/attachment.*PuraMatricula-acceso.zip/);
+    assert.equal(Buffer.from(unzipSync(shortcut.bytes)['PuraMatricula.url']).toString('utf16le'),'\uFEFF[InternetShortcut]\r\nURL=http://'+alias+'/\r\nIconFile=C:\\PuraMatricula\\public\\escudo.ico\r\nIconIndex=0\r\n');
+    assert.match((await getFile('/',{Host:alias})).bytes.toString('utf8'),/data-desktop-shortcut="true"/);
     assert.equal((await requestJson(origin+'/api/health',{headers:{Origin:'http://127.0.0.1:4999'}})).status,403);
     for(const site of ['same-site','cross-site'])assert.equal((await requestJson(origin+'/api/health',{headers:{'Sec-Fetch-Site':site}})).status,403);
     const login=await requestJson(origin+'/api/login',{headers:{Origin:origin},body:{username:'local-admin',password:secret}});

@@ -36,7 +36,7 @@ const enrollmentHelpTopics={
   "login": [
     [
       "Ingresa con tu cuenta",
-      "Usa el usuario individual que te entregó Administración. Puedes mostrar u ocultar la contraseña con el ojo, también con teclado."
+      "Usa el usuario individual que te entregó Administración. Puedes mostrar u ocultar la contraseña con el ojo. Recordar mi usuario es opcional y dura 30 días en este navegador; no guarda la clave."
     ],
     [
       "Si no puedes entrar",

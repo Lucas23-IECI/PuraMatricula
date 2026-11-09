@@ -281,7 +281,8 @@ try {
                     try { $body = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
                     if (-not $body.ok -or $body.demo -or $body.application -ne 'matricula') { throw 'El puerto local no responde como Matricula escolar.' }
                 } finally { $reply.Dispose() }
-                Write-Host "Matricula responde en $localUrl (solo en este PC)."
+                $aliasUrl = 'http://matricula.localhost:' + (Get-Setting 'MATRICULA_LOCAL_PORT' '4319')
+                Write-Host "Matricula responde en $localUrl. En el navegador de este PC tambien puede usar $aliasUrl."
             } else { Write-Host 'Salud interna comprobada. Compruebe tambien HTTPS e ingreso desde el PC de Secretaria.' }
         }
         'backup' { Backup-Matricula }

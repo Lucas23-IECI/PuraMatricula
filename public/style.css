@@ -208,6 +208,10 @@ tr:last-child td{border-bottom:0}
 .login-form .password-field{margin-bottom:20px}
 .login-form .password-field label{margin-bottom:0}
 .password-field label small{font-weight:400}
+.login-form .login-remember{display:flex;align-items:flex-start;gap:10px;margin:0 0 14px;font-size:14px}
+.login-remember small{display:block;margin-top:2px;color:var(--muted);font-size:12px;font-weight:400}
+.login-shortcut{margin:0 0 12px;font-size:14px}
+.login-shortcut a{color:var(--primary);text-underline-offset:3px}
 
 /* Modal actions keep a predictable order: cancel at left, primary at right. */
 dialog{width:min(720px,calc(100vw - 32px));max-height:calc(100svh - 40px);padding:28px;border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);color:var(--ink);box-shadow:0 15px 60px #102e4030;overflow:auto}
@@ -382,3 +386,6 @@ button[aria-busy="true"]{display:inline-flex;align-items:center;justify-content:
 /* Home layout is maintained in home-creative.css. */
 .import-year-warning{border-left:4px solid #a76514;background:#fff7e8;color:#69400e}
 .dark .import-year-warning{background:#362a16;color:#f9dfb3}
+
+.login-remember input{flex:0 0 auto;accent-color:var(--primary)}
+.login-form .login-remember input[type="checkbox"]{width:21px;height:21px;min-height:21px;margin:1px 0 0}

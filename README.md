@@ -6,7 +6,7 @@ El destino operativo es el **servidor del Colegio Domingo Santa María**, inicia
 
 ## Primer día en el colegio
 
-Sin HTTPS institucional, ejecute Matrícula en Docker **solo en el PC servidor** y abra `http://127.0.0.1:4319/`. La [guía de Docker](docs/DOCKER-COLEGIO.md#primer-día-sin-certificado-modo-local) explica el arranque con el paquete offline y la instalación desde fuentes. El volumen nace sin estudiantes, cursos ni cuentas predefinidas: el asistente pide crear el primer usuario administrador y su clave temporal. Al ingresar, esa persona cambia la clave y puede crear las cuentas individuales y asignar sus permisos.
+Sin HTTPS institucional, ejecute Matrícula en Docker **solo en el PC servidor** y abra `http://matricula.localhost:4319/` en su navegador. Si el nombre no abre, use `http://127.0.0.1:4319/`. La [guía de Docker](docs/DOCKER-COLEGIO.md#primer-día-sin-certificado-modo-local) explica el arranque offline y el acceso directo de escritorio. El volumen nace sin estudiantes, cursos ni cuentas predefinidas: el asistente pide crear el primer usuario administrador y su clave temporal. Al ingresar, esa persona cambia la clave y puede crear las cuentas individuales y asignar sus permisos.
 
 Antes de incorporar estudiantes, cree un respaldo inicial. En **Organización → Importación** seleccione el año escolar, previsualice el Excel, compruebe el destino de cada hoja y resuelva filas observadas. Solo la confirmación escribe en el volumen. Las altas entran como borradores; las coincidencias y los cambios a fichas existentes se revisan por separado. No se importan usuarios ni contraseñas desde el Excel.
 

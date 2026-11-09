@@ -1,5 +1,17 @@
 # Verificación de PuraMatricula
 
+## Entrada local y escritorio · 9 de noviembre de 2026
+
+El acceso local admite tanto la dirección numérica de loopback como el nombre fijo `matricula.localhost` en el mismo puerto. Otros nombres y solicitudes cruzadas siguen rechazados. El nombre no publica el servicio en la red del colegio ni modifica DNS o hosts.
+
+El instalador crea un acceso directo con el escudo en el escritorio de la cuenta que lo ejecuta. La descarga del ingreso entrega un ZIP con el acceso `.url`; su destino y la ruta del icono provienen de la instalación, no de parámetros de la solicitud. Se comprobaron el archivo ICO en Windows, los scripts en Windows PowerShell 5.1, no sobrescribir otros enlaces, el formato ZIP y la conservación del usuario sin contraseña.
+
+`Recordar mi usuario` es opcional, guarda solo el nombre durante 30 días sin extenderlo en cada ingreso, y admite eliminarlo al desmarcar. Las pruebas rechazan valores vencidos o malformados y toleran localStorage bloqueado. El cambio no altera la sesión de 8 horas.
+
+Cierre de esta revisión: **318 pruebas aprobadas, sin fallos ni omisiones**, y `npm run build` aprobado. En Chromium por terminal se comprobaron ambos accesos locales, la descarga del ZIP y del escudo, primer ingreso y cambio obligatorio de clave, persistencia de la sesión al recargar, base sin estudiantes, recuerdo y vencimiento del usuario, y tamaños de 390 y 1440 px. No hubo errores JavaScript; las respuestas 401 de `/api/session` antes de ingresar o después de salir son las esperadas.
+
+La prueba Docker local aislada incorporó 14 estudiantes sintéticos, edición, PDF, adjunto, respaldo cifrado, restauración y reinicio. Estas comprobaciones no sustituyen probar el instalador en el servidor físico del colegio. Sin certificado, este perfil solo admite el mismo PC; Docker Desktop debe estar iniciado después de reiniciar Windows.
+
 ## Edición, filtros y entrega local · 9 de noviembre de 2026
 
 - La ficha abre en consulta; se puede editar, cancelar, guardar solo los cambios y volver a consultar la revisión. El servidor conserva la procedencia de importación y restringe los movimientos de adjuntos del historial a quien puede verlos.
