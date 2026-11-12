@@ -45,7 +45,8 @@ function build(){
 
   const config=Buffer.from(['MATRICULA_DOCKER_MODE=local','MATRICULA_LOCAL_PORT=4319',`MATRICULA_IMAGE=${image}`,'MATRICULA_DATA_VOLUME=puramatricula_data','MATRICULA_LOCAL_NETWORK_NAME=puramatricula_local',''].join('\r\n'));
   const tarBytes=readFileSync(tar),zipName=basename(source.zipPath);
-  const metadata={kind:'local-update',mode:'local',platform:'linux/amd64',platformImageOnly:true,upgradeFrom:['puramatricula:0.2.0-local-20261109t173905304z'],sourceCommit:commit,image,imageId:inspected.Id,imageConfigId:'sha256:'+configId,zip:zipName,zipSha256:digest(sourceBytes),tar:tarName,tarSha256:digest(tarBytes),configSha256:digest(config)};
+  const escapedVersion=version.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const metadata={kind:'local-update',mode:'local',platform:'linux/amd64',platformImageOnly:true,upgradeFrom:['puramatricula:0.2.0-local-20261109t173905304z'],upgradeFromPattern:`^puramatricula:${escapedVersion}-local-[0-9]{8}t[0-9]{9}z$`,sourceCommit:commit,image,imageId:inspected.Id,imageConfigId:'sha256:'+configId,zip:zipName,zipSha256:digest(sourceBytes),tar:tarName,tarSha256:digest(tarBytes),configSha256:digest(config)};
   const guide=Buffer.from(sourceFiles['docs/ABRIR-PRIMERO-WINDOWS.md']).toString('utf8');
   const launcher=Buffer.from(sourceFiles['scripts/instalar-matricula.cmd']).toString('ascii').replace(/\r?\n/g,'\r\n');
   const payload={

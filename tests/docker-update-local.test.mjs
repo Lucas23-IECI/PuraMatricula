@@ -16,6 +16,10 @@ test('actualizador local conserva volumen, puerto y configuración anterior',()=
   assert.match(script,/No se pudo crear el respaldo\. La imagen no se cambió/);
   assert.match(script,/La nueva imagen no superó la comprobación de salud/);
   assert.match(script,/WriteAllLines\(\$envPath,\$oldLines/);
+  assert.match(script,/upgradeFromPattern/);
+  assert.match(script,/IsMatch\(\$oldImage/);
+  assert.match(script,/upgradePatternProperty/);
+  assert.match(script,/RegexOptions\]::CultureInvariant/);
   assert.doesNotMatch(script,/docker[^\r\n]*(?:volume\s+(?:rm|prune)|compose[^\r\n]*down[^\r\n]*-v)/i);
 });
 
