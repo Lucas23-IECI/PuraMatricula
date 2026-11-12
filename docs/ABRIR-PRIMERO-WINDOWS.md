@@ -2,7 +2,7 @@
 
 1. Extraiga **todo** el ZIP a una carpeta local. Abra Docker Desktop en modo Linux amd64 (Docker Engine 28 o posterior) y espere a que esté listo.
 2. En la carpeta extraída, haga doble clic en **INSTALAR MATRICULA** (`INSTALAR MATRICULA.cmd` si Windows muestra las extensiones). El instalador abre una ventana; no hace falta escribir un comando. Cree el primer usuario administrador y una clave temporal de al menos 12 caracteres.
-3. Abra el acceso con el escudo que queda en el escritorio, o entre en <http://matricula.localhost:4319/>. Si el nombre no abre, use <http://127.0.0.1:4319/>. Cambie la clave temporal al entrar.
+3. Abra el acceso con el escudo que queda en el escritorio. La instalación detecta la IPv4 interna del PC servidor y muestra esa dirección para los otros computadores autorizados. Cambie la clave temporal al entrar.
 
 La base parte vacía y se guarda por separado de Asistencia. El ZIP ya incluye la imagen Docker. Este modo funciona solo desde el mismo PC hasta que se configure HTTPS institucional.
 

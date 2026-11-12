@@ -29,6 +29,15 @@ try {
         if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $Hash) { throw "No coincide SHA-256: $Name." }
         return $file
     }
+    function Get-LanAddress {
+        $candidate = Get-NetIPConfiguration |
+            Where-Object { $_.NetAdapter.Status -eq 'Up' -and $_.IPv4DefaultGateway } |
+            ForEach-Object { $_.IPv4Address.IPAddress } |
+            Where-Object { $_ -and $_ -notlike '169.254.*' } |
+            Select-Object -First 1
+        if (-not $candidate) { throw 'No se encontro una direccion IPv4 activa con puerta de enlace.' }
+        return $candidate
+    }
     $zip = Confirm-Artifact $release.zip $release.zipSha256
     $tar = Confirm-Artifact $release.tar $release.tarSha256
     $config = Confirm-Artifact 'docker.local.env' $release.configSha256
@@ -53,7 +62,21 @@ try {
     if ($LASTEXITCODE -ne 0 -or $imageIds -cnotcontains $id) { throw 'La imagen cargada no coincide con la entrega.' }
 
     Expand-Archive -LiteralPath $zip -DestinationPath $target
+    $lanAddress = Get-LanAddress
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($isAdmin) {
+        $ruleName = 'PuraMatricula - Acceso interno HTTP'
+        if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort $Puerto -Action Allow -Profile Private | Out-Null }
+    } else { Write-Warning 'PowerShell no tiene permisos de administrador. El acceso desde otros computadores puede requerir que Informática permita este puerto en la red privada.' }
     $envText = (Get-Content -LiteralPath $config -Raw).Replace('MATRICULA_LOCAL_PORT=4319','MATRICULA_LOCAL_PORT='+$Puerto)
+    $envText = $envText.TrimEnd([char[]]@(13,10)) + [Environment]::NewLine + @(
+        'MATRICULA_TRANSPORT=lan'
+        'MATRICULA_ALLOW_INSECURE_LAN=1'
+        'MATRICULA_LOCAL_BIND=0.0.0.0'
+        ('MATRICULA_LAN_IP=' + $lanAddress)
+        ('MATRICULA_ORIGIN=http://' + $lanAddress + ':' + $Puerto)
+    ) -join [Environment]::NewLine
+    $envText += [Environment]::NewLine
     $iconPath = Join-Path $target 'public\escudo.ico'
     if ($iconPath -match '^[A-Za-z]:\\[^''\x00-\x1f\x7f]+$' -and (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
         $newline = [Environment]::NewLine
@@ -78,8 +101,7 @@ try {
             Write-Warning 'No se pudo crear el acceso directo en este Escritorio. La aplicacion quedo instalada; puede volver a crearlo con scripts\crear-acceso-directo.ps1.'
         }
     }
-    Write-Host "Abra http://matricula.localhost:$Puerto/ en este PC y cambie su contrasena temporal."
-    Write-Host "Si el navegador no abre ese nombre, use http://127.0.0.1:$Puerto/."
+    Write-Host "Abra http://$lanAddress`:$Puerto/ desde los computadores autorizados y cambie su contrasena temporal."
 } catch {
     Write-Error $_.Exception.Message
     exit 1

@@ -5,7 +5,7 @@
 1. Descargue `PuraMatricula-Instalador-Windows.zip` desde **Assets** de la versión en GitHub y extraiga todo en una carpeta local.
 2. Abra Docker Desktop y espere a que esté listo. Se necesita el motor local Linux amd64, Docker Engine 28 o posterior.
 3. Haga doble clic en **INSTALAR MATRICULA.cmd** desde la carpeta extraída. Cree la primera cuenta administradora cuando se lo pida.
-4. Abra el acceso del escritorio o `http://matricula.localhost:4319/`. La alternativa es `http://127.0.0.1:4319/`. Cambie la clave temporal e ingrese con su cuenta individual.
+4. Abra el acceso del escritorio. La dirección interna queda escrita en `docker.env` como `MATRICULA_ORIGIN` y se muestra al terminar la instalación.
 
 La imagen va dentro del ZIP. El servidor no necesita clonar el repositorio, instalar Node ni compilar. La base empieza vacía. Este modo solo se usa desde el PC servidor; para acceso de red, consulte [Docker y HTTPS](DOCKER-COLEGIO.md). Si ya hay una instalación, conserve su volumen y siga el procedimiento de actualización.
 

@@ -30,7 +30,7 @@ async function jsonBody(req,maxBytes=8*1024*1024){
   if(!value||typeof value!=='object'||Array.isArray(value))fail(400,'Use un objeto JSON para esta solicitud.');
   req[parsedJson]=value;return value;
 }
-export async function createApp({directory=join(root,'.local','manual'),demo=false,tls,origin,host='127.0.0.1',store:injectedStore,secure=false,localOnly=false,desktopIcon}={}){
+export async function createApp({directory=join(root,'.local','manual'),demo=false,tls,origin,host='127.0.0.1',store:injectedStore,secure=false,localOnly=false,allowInsecureLan=false,desktopIcon}={}){
   const secureCookies=Boolean(tls||secure),sessionCookie=localOnly?'matricula_local_session':'matricula_session';
   const localOrigin=typeof origin==='string'&&/^http:\/\/127\.0\.0\.1:([1-9]\d{3,4})$/.exec(origin);
   if(localOnly&&(!localOrigin||Number(localOrigin[1])<1024||Number(localOrigin[1])>65535||secureCookies||demo))throw new Error('El modo local requiere un origen HTTP de loopback explícito y su publicación local en Docker.');
@@ -42,13 +42,14 @@ export async function createApp({directory=join(root,'.local','manual'),demo=fal
   // Proxy mode is explicit and requires its public HTTPS origin. Forwarded
   // headers alone can never turn an arbitrary HTTP listener into a TLS proxy.
   if((secure&&!origin)||(secureCookies&&origin&&!origin.startsWith('https://')))throw new Error('El modo TLS o proxy seguro requiere MATRICULA_ORIGIN HTTPS.');
-  if(!secure&&!localOnly&&!['127.0.0.1','localhost','::1'].includes(host)&&(!tls||!origin?.startsWith('https://')))throw new Error('Para acceso LAN configure HTTPS y MATRÍCULA_ORIGIN.');
+  if(!secure&&!localOnly&&!allowInsecureLan&&!['127.0.0.1','localhost','::1'].includes(host)&&(!tls||!origin?.startsWith('https://')))throw new Error('Para acceso LAN configure MATRICULA_ORIGIN explícito.');
+  if(allowInsecureLan&&(!origin?.startsWith('http://')||localOnly))throw new Error('El modo LAN requiere un origen HTTP interno explícito.');
   if(demo&&!['127.0.0.1','localhost','::1'].includes(host))throw new Error('La demostración solo se permite en localhost.');
   const ownStore=!injectedStore,store=injectedStore||await openAsyncStore(directory),testEnvironment=process.env.MATRICULA_DATA_MODE==='synthetic'||demo,maxAttachmentBytes=store.maxAttachmentBytes||(store.kind==='postgres'?2*1024*1024:5*1024*1024);store.maxAttachmentBytes=maxAttachmentBytes;const svc=createService(store),schoolImport=createSchoolImport(store,svc),accounts=createAccounts(store,svc),reports=createReports(store,svc),attempts=new Map();let pendingBodies=0;
   const pruneLoginAttempts=now=>{if(attempts.size<5000)return;for(const [key,value] of attempts){if(value.until<=now)attempts.delete(key);if(attempts.size<5000)break;}if(attempts.size>=5000){const first=attempts.keys().next().value;if(first!==undefined)attempts.delete(first);}};
   if(!await store.verifyAudit()){if(ownStore)await store.close();throw new Error('La cadena de auditoría está alterada.');}
   const originUrl=origin?new URL(origin):null;
-  const allowedHosts=originUrl?new Set([originUrl.host,...(localOnly?[`matricula.localhost:${originUrl.port}`]:String(process.env.MATRICULA_ALLOWED_HOSTS||'').split(',').map(x=>x.trim()).filter(Boolean))]):null;
+  const allowedHosts=originUrl?new Set([originUrl.host,...String(process.env.MATRICULA_ALLOWED_HOSTS||'').split(',').map(x=>x.trim()).filter(Boolean)]):null;
   // The Windows installer supplies a local drive path. Never accept UNC paths,
   // line breaks or untrusted request parameters in an Internet Shortcut.
   const shortcutIcon=localOnly&&typeof desktopIcon==='string'&&desktopIcon.length<=400&&/^[A-Z]:\\(?:[^\\/:*?"<>|\x00-\x1f]+\\)*public\\escudo\.ico$/i.test(desktopIcon)&&!desktopIcon.split('\\').some(segment=>segment==='.'||segment==='..')?desktopIcon:null;

@@ -25,6 +25,15 @@ function Set-EnvValue([string[]]$lines,[string]$name,[string]$value) {
     foreach($line in $lines){if($line -match ('^\s*'+[regex]::Escape($name)+'\s*=')){ $result+="$name=$value";$found=$true } else {$result+=$line}}
     if(-not $found){$result+="$name=$value"};return $result
 }
+function Get-LanAddress {
+    $candidate = Get-NetIPConfiguration |
+        Where-Object { $_.NetAdapter.Status -eq 'Up' -and $_.IPv4DefaultGateway } |
+        ForEach-Object { $_.IPv4Address.IPAddress } |
+        Where-Object { $_ -and $_ -notlike '169.254.*' } |
+        Select-Object -First 1
+    if (-not $candidate) { Fail 'No se encontró una dirección IPv4 interna activa.' }
+    return [string]$candidate
+}
 
 try {
     if ($Destino -notmatch '^[A-Za-z]:[\\/]') { Fail 'El destino debe ser una carpeta absoluta de un disco local.' }
@@ -51,7 +60,20 @@ try {
     Write-Host 'Se hará un respaldo cifrado antes de cambiar la imagen.';& $assistant backup;if($LASTEXITCODE -ne 0){Fail 'No se pudo crear el respaldo. La imagen no se cambió.'}
     Invoke-Docker @('image','load','--input',$tar);$newIds=@(Invoke-Docker @('image','inspect','--format','{{.Id}}',$release.image) -Capture);$expected=@($release.imageId,$release.imageConfigId)|Where-Object{$_ -and $_ -match '^sha256:[a-f0-9]{64}$'};if($newIds.Count -ne 1 -or ($expected -notcontains $newIds[0])){Fail 'La imagen cargada no coincide con la entrega.'}
     $oldLines=[string[]]$lines;$backupEnv=Join-Path $target ('.docker.env.before-update-'+[Guid]::NewGuid().ToString('N')+'.txt');[IO.File]::WriteAllLines($backupEnv,$oldLines,(New-Object Text.UTF8Encoding($false)))
-    try{$next=Set-EnvValue $oldLines 'MATRICULA_IMAGE' ([string]$release.image);$temporary=$envPath+'.partial-'+[Guid]::NewGuid().ToString('N');[IO.File]::WriteAllLines($temporary,$next,(New-Object Text.UTF8Encoding($false)));Move-Item -LiteralPath $temporary -Destination $envPath -Force;& $assistant start;if($LASTEXITCODE -ne 0){Fail 'La nueva imagen no pudo iniciar.'};& $assistant check;if($LASTEXITCODE -ne 0){Fail 'La nueva imagen no superó la comprobación de salud.'};Remove-Item -LiteralPath $backupEnv -Force;Write-Host "Actualización lista. Se conservó el puerto $port y el volumen $volume."}
-    catch{Write-Warning 'La actualización no superó la comprobación. Se restaura la configuración anterior; el volumen no se toca.';[IO.File]::WriteAllLines($envPath,$oldLines,(New-Object Text.UTF8Encoding($false)));& $assistant start | Out-Host;throw}
-    finally{if(Test-Path -LiteralPath $backupEnv){Remove-Item -LiteralPath $backupEnv -Force -ErrorAction SilentlyContinue}}
+    $composeTarget=Join-Path $target 'compose.local.yaml';$composePackage=Join-Path $PSScriptRoot 'compose.local.yaml';$composeBackup=$null;$shortcutTarget=Join-Path $target 'scripts\crear-acceso-directo.ps1';$shortcutPackage=Join-Path $PSScriptRoot 'crear-acceso-directo.ps1';$shortcutBackup=$null;$assistantPackage=Join-Path $PSScriptRoot 'docker-colegio.ps1';$assistantBackup=$null
+    try{
+      $next=Set-EnvValue $oldLines 'MATRICULA_IMAGE' ([string]$release.image)
+      if((Get-EnvValue $oldLines 'MATRICULA_TRANSPORT' 'local') -ne 'lan'){
+        $lan=Get-LanAddress
+        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        if ($isAdmin) { $ruleName='PuraMatricula - Acceso interno HTTP';if(-not(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)){New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort ([int]$port) -Action Allow -Profile Private | Out-Null} }
+        $next=Set-EnvValue $next 'MATRICULA_TRANSPORT' 'lan';$next=Set-EnvValue $next 'MATRICULA_ALLOW_INSECURE_LAN' '1';$next=Set-EnvValue $next 'MATRICULA_LOCAL_BIND' '0.0.0.0';$next=Set-EnvValue $next 'MATRICULA_LAN_IP' $lan;$next=Set-EnvValue $next 'MATRICULA_ORIGIN' ('http://'+$lan+':'+$port)
+      }
+      if(Test-Path -LiteralPath $composePackage -PathType Leaf){$composeBackup=$composeTarget+'.before-update-'+[Guid]::NewGuid().ToString('N');Copy-Item -LiteralPath $composeTarget -Destination $composeBackup -Force;Copy-Item -LiteralPath $composePackage -Destination $composeTarget -Force}
+      if((Test-Path -LiteralPath $shortcutPackage -PathType Leaf) -and (Test-Path -LiteralPath $shortcutTarget -PathType Leaf)){$shortcutBackup=$shortcutTarget+'.before-update-'+[Guid]::NewGuid().ToString('N');Copy-Item -LiteralPath $shortcutTarget -Destination $shortcutBackup -Force;Copy-Item -LiteralPath $shortcutPackage -Destination $shortcutTarget -Force}
+      if((Test-Path -LiteralPath $assistantPackage -PathType Leaf) -and (Test-Path -LiteralPath $assistant -PathType Leaf)){$assistantBackup=$assistant+'.before-update-'+[Guid]::NewGuid().ToString('N');Copy-Item -LiteralPath $assistant -Destination $assistantBackup -Force;Copy-Item -LiteralPath $assistantPackage -Destination $assistant -Force}
+      $temporary=$envPath+'.partial-'+[Guid]::NewGuid().ToString('N');[IO.File]::WriteAllLines($temporary,$next,(New-Object Text.UTF8Encoding($false)));Move-Item -LiteralPath $temporary -Destination $envPath -Force;& $assistant start;if($LASTEXITCODE -ne 0){Fail 'La nueva imagen no pudo iniciar.'};& $assistant check;if($LASTEXITCODE -ne 0){Fail 'La nueva imagen no superó la comprobación de salud.'};Remove-Item -LiteralPath $backupEnv -Force;Write-Host "Actualización lista. Se conservó el puerto $port y el volumen $volume. Acceso interno: $($next | Where-Object {$_ -like 'MATRICULA_ORIGIN=*'} | Select-Object -First 1)."
+    }
+    catch{Write-Warning 'La actualización no superó la comprobación. Se restaura la configuración anterior; el volumen no se toca.';[IO.File]::WriteAllLines($envPath,$oldLines,(New-Object Text.UTF8Encoding($false)));if($composeBackup -and (Test-Path -LiteralPath $composeBackup)){Copy-Item -LiteralPath $composeBackup -Destination $composeTarget -Force};if($shortcutBackup -and (Test-Path -LiteralPath $shortcutBackup)){Copy-Item -LiteralPath $shortcutBackup -Destination $shortcutTarget -Force};if($assistantBackup -and (Test-Path -LiteralPath $assistantBackup)){Copy-Item -LiteralPath $assistantBackup -Destination $assistant -Force};& $assistant start | Out-Host;throw}
+    finally{if(Test-Path -LiteralPath $backupEnv){Remove-Item -LiteralPath $backupEnv -Force -ErrorAction SilentlyContinue};if($composeBackup -and (Test-Path -LiteralPath $composeBackup)){Remove-Item -LiteralPath $composeBackup -Force -ErrorAction SilentlyContinue};if($shortcutBackup -and (Test-Path -LiteralPath $shortcutBackup)){Remove-Item -LiteralPath $shortcutBackup -Force -ErrorAction SilentlyContinue};if($assistantBackup -and (Test-Path -LiteralPath $assistantBackup)){Remove-Item -LiteralPath $assistantBackup -Force -ErrorAction SilentlyContinue}}
 }catch{Write-Error $_.Exception.Message;exit 1}

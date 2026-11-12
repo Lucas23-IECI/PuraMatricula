@@ -2,7 +2,7 @@
 
 ## Entrada local y escritorio · 9 de noviembre de 2026
 
-El acceso local admite tanto la dirección numérica de loopback como el nombre fijo `matricula.localhost` en el mismo puerto. Otros nombres y solicitudes cruzadas siguen rechazados. El nombre no publica el servicio en la red del colegio ni modifica DNS o hosts.
+La entrega interna usa la IPv4 que detecta el instalador en el PC servidor. Esa dirección se conserva en `MATRICULA_ORIGIN` y se valida como host autorizado.
 
 El instalador crea un acceso directo con el escudo en el escritorio de la cuenta que lo ejecuta. La descarga del ingreso entrega un ZIP con el acceso `.url`; su destino y la ruta del icono provienen de la instalación, no de parámetros de la solicitud. Se comprobaron el archivo ICO en Windows, los scripts en Windows PowerShell 5.1, no sobrescribir otros enlaces, el formato ZIP y la conservación del usuario sin contraseña.
 

@@ -33,8 +33,12 @@ if ([string]::IsNullOrWhiteSpace($Carpeta) -or -not [IO.Directory]::Exists($Carp
 $icono = Join-Path $instalacion 'public\escudo.ico'
 if (-not [IO.File]::Exists($icono)) { throw 'No se encontro el escudo de la instalacion.' }
 if ($icono -match '[\x00-\x1f\x7f]') { throw 'La ruta del icono no se puede usar en el acceso directo.' }
-$servidor = if ($UsarIP) { '127.0.0.1' } else { 'matricula.localhost' }
-$direccion = 'http://{0}:{1}/' -f $servidor, $Puerto
+$originLine = $configLines | Where-Object { $_ -match '^\s*MATRICULA_ORIGIN\s*=' } | Select-Object -Last 1
+$direccion = if (-not $UsarIP -and $originLine -and $originLine -match '^\s*MATRICULA_ORIGIN\s*=\s*(https?://[^\s#]+)\s*(?:#.*)?$') { $Matches[1].TrimEnd('/') + '/' } else {
+    $lanLine = $configLines | Where-Object { $_ -match '^\s*MATRICULA_LAN_IP\s*=' } | Select-Object -Last 1
+    $servidor = if ($UsarIP -or -not $lanLine) { '127.0.0.1' } else { ($lanLine -split '=',2)[1].Trim() }
+    'http://{0}:{1}/' -f $servidor, $Puerto
+}
 $contenido = @('[InternetShortcut]', "URL=$direccion", "IconFile=$icono", 'IconIndex=0', '') -join [Environment]::NewLine
 $encoding = [Text.UnicodeEncoding]::new($false, $true)
 [byte[]]$bytes = $encoding.GetPreamble() + $encoding.GetBytes($contenido)

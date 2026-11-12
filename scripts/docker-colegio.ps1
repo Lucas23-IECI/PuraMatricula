@@ -251,7 +251,7 @@ try {
     if ($Command -eq 'init') { New-Configuration }
     $localMode = (Get-Setting 'MATRICULA_DOCKER_MODE' 'tls') -eq 'local'
     if ($localMode -and $Command -ne 'stop') {
-        if ($serverVersion -notmatch '^(\d+)\.' -or [int]$Matches[1] -lt 28) { throw 'El modo local requiere Docker Engine 28 o posterior para aislar la publicacion en 127.0.0.1.' }
+        if ($serverVersion -notmatch '^(\d+)\.' -or [int]$Matches[1] -lt 28) { throw 'El modo local requiere Docker Engine 28 o posterior.' }
         $endpoint = if (-not $env:DOCKER_CONTEXT -and $env:DOCKER_HOST) { $env:DOCKER_HOST } else { @(Invoke-Docker -Arguments @('context', 'inspect', '--format', '{{.Endpoints.docker.Host}}') -Capture)[0] }
         if ($endpoint -notmatch '^(npipe:////\./pipe/|unix:///)') { throw 'El modo local requiere el motor Docker de este PC; no use un contexto remoto.' }
     }
@@ -271,7 +271,7 @@ try {
             Invoke-Compose -Arguments @('exec', '-T', $ServiceName, 'node', 'scripts/docker-start.mjs', '--check')
             Invoke-Compose -Arguments @('exec', '-T', $ServiceName, 'node', 'scripts/docker-healthcheck.mjs')
             if ($localMode) {
-                $localUrl = 'http://127.0.0.1:' + (Get-Setting 'MATRICULA_LOCAL_PORT' '4319')
+                $localUrl = Get-Setting 'MATRICULA_ORIGIN' ('http://127.0.0.1:' + (Get-Setting 'MATRICULA_LOCAL_PORT' '4319'))
                 $health = [Net.WebRequest]::Create($localUrl + '/api/health')
                 $health.Proxy = $null
                 $health.Timeout = 5000
@@ -279,10 +279,9 @@ try {
                 try {
                     $reader = New-Object IO.StreamReader($reply.GetResponseStream())
                     try { $body = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-                    if (-not $body.ok -or $body.demo -or $body.application -ne 'matricula') { throw 'El puerto local no responde como Matricula escolar.' }
+                    if (-not $body.ok -or $body.demo -or $body.application -ne 'matricula') { throw 'La dirección configurada no responde como Matricula escolar.' }
                 } finally { $reply.Dispose() }
-                $aliasUrl = 'http://matricula.localhost:' + (Get-Setting 'MATRICULA_LOCAL_PORT' '4319')
-                Write-Host "Matricula responde en $localUrl. En el navegador de este PC tambien puede usar $aliasUrl."
+                Write-Host "Matricula responde en $localUrl. Use esa misma dirección desde los computadores autorizados."
             } else { Write-Host 'Salud interna comprobada. Compruebe tambien HTTPS e ingreso desde el PC de Secretaria.' }
         }
         'backup' { Backup-Matricula }

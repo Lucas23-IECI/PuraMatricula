@@ -10,7 +10,7 @@ Es un proyecto independiente del sistema de asistencia: un servicio `puramatricu
 - Docker Desktop con motor Linux/WSL 2 en Windows, o Docker Engine y Compose en Linux. Los asistentes utilizan Compose moderno con `up --wait`; use Compose 2.20 o posterior.
 - Una carpeta local para el código, por ejemplo `C:\PuraMatricula`, fuera de OneDrive y del proyecto de asistencia.
 - Si se construye desde el ZIP, el primer build necesita Internet para obtener la imagen Node 24 y las dependencias fijadas en `package-lock.json`. Con una imagen acompañante cargada se utiliza el camino sin red descrito más abajo. El PC servidor no necesita instalar Node.
-- Si aún no hay HTTPS, el modo local permite empezar desde el PC servidor. El acceso desde otros equipos requiere HTTPS o el acceso remoto al escritorio del servidor que el colegio ya tenga autorizado y configurado.
+- El instalador detecta la IPv4 interna del servidor y publica Matrícula dentro de la red privada, igual que la instalación de Atrasos. HTTPS se puede agregar después sin cambiar el volumen ni la base.
 
 El ZIP de fuentes y la imagen Docker son artefactos distintos. El ZIP no incluye una imagen; una imagen acompañante se prueba y exporta por separado, junto con su propio SHA-256. Los asistentes no publican imágenes.
 
@@ -74,13 +74,13 @@ Use la entrega que incluye `compose.local.yaml`. En el servidor, con Docker Engi
     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\docker-colegio.ps1 init -Mode local -UseImage
     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\docker-colegio.ps1 check
 
-Abra **http://matricula.localhost:4319/** en el navegador del mismo PC servidor. Si el navegador no resuelve el nombre, use `http://127.0.0.1:4319/`. Ambos llegan al mismo servicio y a la misma base. El asistente pide el nombre de usuario y una clave temporal oculta. Al entrar, cámbiela y cree las cuentas individuales que usarán Matrícula. Si ya se inicializó la base, utilice `start` y `check`, en vez de repetir `init`. Si el puerto está ocupado, cambie `MATRICULA_LOCAL_PORT` a otro puerto libre y utilice esa misma dirección; si la base ya se inicializó, utilice `start`.
+Abra la dirección IPv4 interna que muestra el instalador, por ejemplo `http://192.168.1.25:4319/`. Esa misma dirección se usa desde los computadores autorizados y llega al mismo servicio y la misma base. El asistente pide el nombre de usuario y una clave temporal oculta. Al entrar, cámbiela y cree las cuentas individuales que usarán Matrícula. Si ya se inicializó la base, utilice `start` y `check`, en vez de repetir `init`. Si el puerto está ocupado, cambie `MATRICULA_LOCAL_PORT` a otro puerto libre y utilice esa misma dirección; si la base ya se inicializó, utilice `start`.
 
 El instalador deja un acceso directo con el escudo en el escritorio de la cuenta de Windows que lo ejecuta. Para otra cuenta del mismo PC, la persona puede descargar desde el ingreso un ZIP con el acceso directo, extraerlo y moverlo a su escritorio. También puede ejecutar `scripts\crear-acceso-directo.ps1` desde su cuenta; la opción `-UsarIP` crea el acceso con la dirección alternativa. No se instalan aplicaciones en el navegador ni se modifica DNS.
 
 En el ingreso, **Recordar mi usuario en este equipo** guarda solo el nombre de usuario durante 30 días desde que se elige al ingresar. Es opcional, se puede desmarcar y depende del navegador y la dirección que se use. No guarda la contraseña ni amplía la duración de la sesión. En un equipo compartido, mantenga la opción desmarcada.
 
-El puerto se publica exclusivamente en `127.0.0.1` sobre una red Docker dedicada. No abra reglas de firewall, no configure reenvío de puertos y no use la IP del servidor para este modo. Docker Engine anterior a 28 no es apto para este perfil: [Docker documenta la limitación](https://docs.docker.com/engine/network/port-publishing/).
+El instalador publica el puerto en la IPv4 interna detectada del servidor y crea una regla de firewall solo para redes privadas cuando tiene permisos de administrador. No configure reenvío hacia Internet. Docker Engine anterior a 28 no es apto para este perfil: [Docker documenta la limitación](https://docs.docker.com/engine/network/port-publishing/).
 
 Antes de incorporar el padrón, compruebe que una cuenta autorizada puede ingresar y que otra cuenta no puede acceder a cursos que no le corresponden. Revise el año y destino de cada hoja en la previsualización de Importación, y haga un respaldo cifrado. El respaldo debe quedar en una ubicación institucional autorizada y su clave por separado. Si una hoja requiere ajuste, corríjala o déjela fuera de esa carga; confirmar el padrón crea borradores y no sustituye la confirmación de matrícula.
 

@@ -9,17 +9,24 @@ export function publicOrigin(value,transport){
     if(!match||Number(match[1])<1024||Number(match[1])>65535)throw Error('Modo local: use http://127.0.0.1:PUERTO, con puerto entre 1024 y 65535.');
     return value;
   }
+  if(transport==='lan'){
+    let origin;try{origin=new URL(value);}catch{throw Error('Modo LAN: defina MATRICULA_ORIGIN con la dirección interna del servidor.');}
+    if(origin.protocol!=='http:'||origin.username||origin.password||origin.pathname!=='/'||origin.search||origin.hash||!origin.hostname)throw Error('Modo LAN: MATRICULA_ORIGIN debe ser HTTP, sin credenciales, rutas ni consultas.');
+    if(Number(origin.port||80)<1024||Number(origin.port||80)>65535)throw Error('Modo LAN: el puerto de MATRICULA_ORIGIN no es válido.');
+    return origin.origin;
+  }
   let origin;try{origin=new URL(value);}catch{throw Error('Defina MATRICULA_ORIGIN con un origen HTTPS válido.');}
   if(origin.protocol!=='https:'||origin.username||origin.password||origin.pathname!=='/'||origin.search||origin.hash)throw Error('MATRICULA_ORIGIN debe ser HTTPS, sin credenciales, rutas ni consultas.');
   return origin.origin;
 }
 export function dockerConfig(env=process.env,{checkFiles=true}={}){
   const transport=env.MATRICULA_TRANSPORT||'proxy';
-  if(!['proxy','tls','local'].includes(transport))throw Error('MATRICULA_TRANSPORT debe ser local, tls o proxy.');
+  if(!['proxy','tls','lan','local'].includes(transport))throw Error('MATRICULA_TRANSPORT debe ser local, lan, tls o proxy.');
   if(transport==='proxy'&&env.MATRICULA_BEHIND_TLS_PROXY!=='1')throw Error('Declare MATRICULA_BEHIND_TLS_PROXY=1 únicamente detrás del proxy HTTPS del colegio.');
   if(transport!=='proxy'&&env.MATRICULA_BEHIND_TLS_PROXY==='1')throw Error('Elija TLS nativo o proxy HTTPS; no mezcle ambos modos.');
   if(env.MATRICULA_DATABASE_URL||env.MATRICULA_STORAGE_KEY||env.VERCEL)throw Error('Este contenedor usa exclusivamente su volumen SQLite y storage.key; quite la configuración cloud de este proceso.');
   if(env.MATRICULA_DATA_MODE==='synthetic')throw Error('El arranque escolar no admite el modo de demostración.');
+  if(transport==='lan'&&env.MATRICULA_ALLOW_INSECURE_LAN!=='1')throw Error('El modo LAN requiere MATRICULA_ALLOW_INSECURE_LAN=1.');
   const origin=publicOrigin(env.MATRICULA_ORIGIN,transport),directory=env.MATRICULA_DATA,port=Number(env.MATRICULA_PORT||4318),host=env.MATRICULA_HOST||'0.0.0.0';
   if(!directory||!isAbsolute(directory))throw Error('MATRICULA_DATA debe ser la ruta absoluta del volumen propio de Matrícula.');
   if(host!=='0.0.0.0')throw Error('El contenedor debe escuchar internamente en 0.0.0.0; use el archivo Compose del modo elegido.');
@@ -35,7 +42,7 @@ export function dockerConfig(env=process.env,{checkFiles=true}={}){
     for(const key of ['MATRICULA_TLS_CERT','MATRICULA_TLS_KEY'])if(!env[key]||!isAbsolute(env[key]))throw Error(`${key} debe ser la ruta absoluta del PEM montado de solo lectura.`);
     if(checkFiles)return {...schoolConfig({...env,MATRICULA_HOST:host,MATRICULA_PORT:String(port),MATRICULA_ORIGIN:origin}),secure:true,transport};
   }
-  return {origin,directory:resolve(directory),port,host,secure:transport!=='local',localOnly:transport==='local',transport,...(transport==='local'?{desktopIcon:env.MATRICULA_DESKTOP_ICON}:{})};
+  return {origin,directory:resolve(directory),port,host,secure:transport==='tls'||transport==='proxy',localOnly:transport==='local',allowInsecureLan:transport==='lan',transport,...(transport==='local'||transport==='lan'?{desktopIcon:env.MATRICULA_DESKTOP_ICON}:{})};
 }
 export function requireEmptyDirectory(directory){
   if(!directory||!isAbsolute(directory))throw Error('Use una carpeta absoluta y exclusiva para Matrícula.');

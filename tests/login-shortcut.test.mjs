@@ -42,11 +42,11 @@ test('el acceso de escritorio conserva el icono, no pisa otro archivo y admite a
  mkdirSync(join(root,'scripts'));mkdirSync(join(root,'public'));mkdirSync(join(root,'desktop'));
  cpSync(new URL('../scripts/crear-acceso-directo.ps1',import.meta.url),join(root,'scripts','crear-acceso-directo.ps1'));
  cpSync(new URL('../public/escudo.ico',import.meta.url),join(root,'public','escudo.ico'));
- writeFileSync(join(root,'docker.env'),'MATRICULA_DOCKER_MODE=local\nMATRICULA_LOCAL_PORT=14325\n');
+ writeFileSync(join(root,'docker.env'),'MATRICULA_DOCKER_MODE=local\nMATRICULA_LOCAL_PORT=14325\nMATRICULA_ORIGIN=http://192.168.1.25:14325\n');
  const run=(...args)=>spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',join(root,'scripts','crear-acceso-directo.ps1'),'-Carpeta',join(root,'desktop'),...args],{encoding:'utf8'});
  const first=run();assert.equal(first.status,0,first.stderr);
  const path=first.stdout.trim(),contents=readFileSync(path);
- assert.equal(contents.readUInt16LE(0),0xfeff);assert.match(contents.toString('utf16le'),/URL=http:\/\/matricula\.localhost:14325\//);
+ assert.equal(contents.readUInt16LE(0),0xfeff);assert.match(contents.toString('utf16le'),/URL=http:\/\/192\.168\.1\.25:14325\//);
  assert.match(contents.toString('utf16le'),/IconFile=.*public\\escudo\.ico/);
  const again=run();assert.equal(again.stdout.trim(),path);
  const other=run('-UsarIP');assert.equal(other.status,0,other.stderr);

@@ -19,13 +19,14 @@ services:
       MATRICULA_DATA: /data/matricula
       MATRICULA_HOST: 0.0.0.0
       MATRICULA_PORT: "4318"
-      MATRICULA_ORIGIN: http://127.0.0.1:${MATRICULA_LOCAL_PORT:-4319}
-      MATRICULA_TRANSPORT: local
+      MATRICULA_ORIGIN: ${MATRICULA_ORIGIN:-http://127.0.0.1:${MATRICULA_LOCAL_PORT:-4319}}
+      MATRICULA_TRANSPORT: ${MATRICULA_TRANSPORT:-local}
+      MATRICULA_ALLOW_INSECURE_LAN: ${MATRICULA_ALLOW_INSECURE_LAN:-0}
       MATRICULA_DESKTOP_ICON: ${MATRICULA_DESKTOP_ICON:-}
     ports:
       - target: 4318
         published: "${MATRICULA_LOCAL_PORT:-4319}"
-        host_ip: 127.0.0.1
+        host_ip: ${MATRICULA_LOCAL_BIND:-127.0.0.1}
         protocol: tcp
     volumes:
       - matricula-data:/data
@@ -51,5 +52,5 @@ networks:
     name: ${MATRICULA_LOCAL_NETWORK_NAME:-puramatricula_local}
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
+      com.docker.network.bridge.host_binding_ipv4: "${MATRICULA_LOCAL_BIND:-127.0.0.1}"
       com.docker.network.bridge.enable_icc: "false"
