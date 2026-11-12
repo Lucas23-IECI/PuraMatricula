@@ -17,6 +17,6 @@ export async function startDocker(env=process.env){
   return {...app,close:stop,config};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
-  try{const {values}=parseArgs({options:{check:{type:'boolean'}}});if(values.check){const config=dockerConfig();console.log(`Configuración ${config.transport==='tls'?'TLS nativa (par, SAN y vigencia)':config.localOnly?'local del PC servidor':'de proxy HTTPS'} y volumen independiente comprobados.`);}else{const app=await startDocker();console.log(`Matrícula lista en modo ${app.config.transport} en el puerto ${app.config.port}.`);}}
+  try{const {values}=parseArgs({options:{check:{type:'boolean'}}});if(values.check){const config=dockerConfig();console.log(`Configuración ${config.transport==='tls'?'TLS nativa (par, SAN y vigencia)':config.transport==='lan'?'LAN interna del colegio':config.localOnly?'local del PC servidor':'de proxy HTTPS'} y volumen independiente comprobados.`);}else{const app=await startDocker();console.log(`Matrícula lista en modo ${app.config.transport} en el puerto ${app.config.port}.`);}}
   catch(error){console.error(`No se pudo iniciar Matrícula: ${error.message}`);process.exitCode=1;}
 }
