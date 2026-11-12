@@ -480,7 +480,7 @@ function auditSummary(item){
 function renderBackup(){ $('#content').innerHTML=heading('Respaldo','Descarga una copia cifrada de la base, el historial y los adjuntos.')+`<section class="panel narrow"><h2>Crear respaldo cifrado</h2><p>Guarda la copia en una ubicación institucional autorizada. Conserva su clave por separado: sin ella no se puede restaurar.</p><form id="backup-form">${passwordField('backup-password','Clave del respaldo <small>(mínimo 16 caracteres)</small>','minlength="16" maxlength="200" autocomplete="new-password" required')}<button class="primary spaced">Descargar respaldo</button><div id="backup-error" class="error-text" role="alert"></div></form><div class="callout spaced">La restauración se realiza localmente en una carpeta nueva. El procedimiento está documentado y debe comprobarse antes del uso escolar.</div></section>`;$('#backup-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;setBusy(b,true,'Preparando respaldo…');try{await download('/api/backup',{method:'POST',body:{password:new FormData(e.target).get('password')}},`matricula-completa-${new Date().toISOString().slice(0,10)}.dsmbak`);e.target.reset();notice('Respaldo descargado.');}catch(error){if($('#backup-error'))$('#backup-error').textContent=error.message;else notice(error.message);}finally{setBusy(b,false);}};}
 document.addEventListener('click',async e=>{const b=e.target.closest('[data-action]');if(!b||b.disabled)return;const a=b.dataset.action;
   if(a==='toggle-password'){const input=document.getElementById(b.getAttribute('aria-controls')),visible=input.type==='password',start=input.selectionStart,end=input.selectionEnd;input.type=visible?'text':'password';if(start!==null)input.setSelectionRange(start,end);b.setAttribute('aria-pressed',String(visible));b.setAttribute('aria-label',visible?'Ocultar contraseña':'Mostrar contraseña');b.title=visible?'Ocultar contraseña':'Mostrar contraseña';b.innerHTML=eyeIcon(visible);return;}
-  const busyLabels={logout:'Cerrando sesión…',pdf:'Preparando PDF…','download-document':'Descargando…','export-course':'Preparando archivo…','commit-import':'Guardando estudiantes…','prepare-import-fields':'Preparando campos…',enroll:'Confirmando matrícula…',revision:'Cargando revisión…'};
+  const busyLabels={logout:'Cerrando sesión…',pdf:'Preparando PDF…','download-document':'Descargando…','export-course':'Preparando archivo…','commit-import':'Guardando estudiantes…','create-import-courses':'Creando cursos…','prepare-import-fields':'Preparando campos…',enroll:'Confirmando matrícula…',revision:'Cargando revisión…'};
   if(busyLabels[a])setBusy(b,true,busyLabels[a]);try{
   if(a==='retry-startup'){await startApplication();return;}
   if(a==='help'){showEnrollmentHelp(b);return;}
@@ -508,6 +508,12 @@ document.addEventListener('click',async e=>{const b=e.target.closest('[data-acti
   else if(a==='export-roster')openRosterDownloads();
   else if(a==='reenter')openReentry();
   else if(a==='export-course')await download('/api/export?'+new URLSearchParams(recordsFilterQuery()),{},`curso-${state.year}.csv`);
+  else if(a==='create-import-courses'){
+    if(state.importKind!=='school'||!state.importPreview?.courseTicket||!Array.isArray(state.importPreview.coursesToCreate))throw new Error('Vuelve a previsualizar la planilla antes de crear los cursos.');
+    const container=$('#content');
+    const result=await api('/api/import/school/create-courses',{method:'POST',body:{year:state.importPreview.year,coursesToCreate:state.importPreview.coursesToCreate,courseTicket:state.importPreview.courseTicket}});
+    if(container===$('#content')){notice(result.created?`${result.created} cursos creados. Vuelve a revisar la planilla.`:'Los cursos ya existían. Vuelve a revisar la planilla.');const form=$('#import-form');form?.requestSubmit(form.querySelector('button.primary')||undefined);}
+  }
   else if(a==='commit-import'){
     if(!importReady())throw new Error('Revisa la planilla y selecciona qué cambios aplicar antes de importar.');
     const container=$('#content'),school=state.importKind==='school';

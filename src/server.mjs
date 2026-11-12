@@ -132,6 +132,7 @@ export async function createApp({directory=join(root,'.local','manual'),demo=fal
         if(path==='/api/import/preview'&&method==='POST'){send(await svc.importPreview(user,await jsonBody(req)));return;}
         if(path==='/api/import/commit'&&method==='POST'){send(await svc.importCommit(user,await jsonBody(req)),201);return;}
         if(path==='/api/import/school/preview'&&method==='POST'){send(await schoolImport.preview(user,await jsonBody(req)));return;}
+        if(path==='/api/import/school/create-courses'&&method==='POST'){send(await schoolImport.createCourses(user,await jsonBody(req)),201);return;}
         if(path==='/api/import/school/commit'&&method==='POST'){send(await schoolImport.commit(user,await jsonBody(req)),201);return;}
         if(path==='/api/audit'&&method==='GET'){
           svc.requirePermission(user,'audit');

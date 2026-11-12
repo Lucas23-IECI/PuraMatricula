@@ -109,6 +109,10 @@ function ticketPayload(actor, templateId, year, rows, coursesToCreate) {
   return JSON.stringify({ purpose: 'school-roster-review-v2', actor, templateId, year: Number(year), rows: stableRows(rows), coursesToCreate: coursesToCreate.map(course => ({ name: course.name, year: Number(course.year) })) });
 }
 
+function courseTicketPayload(actor, year, coursesToCreate) {
+  return JSON.stringify({ purpose: 'school-course-create-v1', actor, year: Number(year), coursesToCreate: coursesToCreate.map(course => ({ name: course.name, year: Number(course.year) })) });
+}
+
 function hashIdentity(store, data) {
   const token = data.identifierType === 'Provisional'
     ? `provisional:${data.identifier || ''}`
@@ -392,14 +396,45 @@ export function createSchoolImport(store, svc) {
     const actionable = counts.new + counts.annual + counts.updates;
     const payload = ticketPayload(user.id, templateInfo?.id, year, rows, coursesToCreate);
     const ticket = hasNonCourseErrors || !actionable ? null : store?.mac ? store.mac(payload) : payload;
+    const courseTicket = coursesToCreate.length ? store?.mac ? store.mac(courseTicketPayload(user.id, year, coursesToCreate)) : courseTicketPayload(user.id, year, coursesToCreate) : null;
     return {
       source: parsed.source || SOURCE, fileName: input.name || input.fileName || null, year, yearContext, courses:courses.filter(course=>can(svc,user,'write',course.id)), rows,
       sheetSummaries:parsed.sheetSummaries||[],mappingTargets:parsed.mappingTargets||[],confirmedIpeRows:parsed.confirmedIpeRows||[],ipeConfirmationToken:token,
-      administrativeRows: parsed.administrativeRows || [], coursesToCreate,
+      administrativeRows: parsed.administrativeRows || [], coursesToCreate, courseTicket,
       unresolvedCourses: coursesToCreate, errors, warnings, ignored: parsed.ignored || [],
       summary: { ...summarizeSchoolImport({ rows, errors, warnings, detectedRows: parsed.summary.detectedRows, unresolvedCourses: coursesToCreate.length }), ...counts },
       ticket, canImport: actionable > 0 && errors.length === 0
     };
+  };
+
+  const createCourses = async (user, input = {}) => {
+    requirePermission(svc, user, 'import');
+    requirePermission(svc, user, 'write');
+    requirePermission(svc, user, 'enroll');
+    if (!user?.allCourses) throw new SchoolImportError('La creación de cursos requiere acceso autorizado a todos los cursos.', 'COURSES_ALL_SCOPE_REQUIRED', 403);
+    const year = parseSchoolYear(input.year);
+    if (year === null) throw new SchoolImportError('Indique un año de matrícula válido.', 'YEAR_INVALID');
+    if (!Array.isArray(input.coursesToCreate) || !input.coursesToCreate.length || input.coursesToCreate.length > MAX_ROWS || input.coursesToCreate.some(course => !course || typeof course.name !== 'string')) {
+      throw new SchoolImportError('No hay cursos pendientes válidos para crear.', 'COURSES_INVALID');
+    }
+    const coursesToCreate = input.coursesToCreate.map(course => ({ name: asText(course.name), year: Number(course.year || year) }));
+    const expected = store?.mac ? store.mac(courseTicketPayload(user.id, year, coursesToCreate)) : courseTicketPayload(user.id, year, coursesToCreate);
+    if (!input.courseTicket || input.courseTicket !== expected) throw new SchoolImportError('La revisión de cursos caducó. Vuelva a previsualizar la planilla.', 'COURSE_REVIEW_STALE', 409);
+    return runTransaction(store, async () => {
+      let created = 0;
+      for (const course of coursesToCreate) {
+        if (!course.name || course.name.length > 80 || parseSchoolYear(course.year) === null || course.year !== year) throw new SchoolImportError('Nombre o año de curso inválido.', 'COURSE_INVALID');
+        const matching = (await dbAll(store, 'SELECT id,name FROM courses WHERE year=?', course.year)).filter(item => courseKey(item.name) === courseKey(course.name));
+        if (matching.length > 1) throw new SchoolImportError('Hay cursos ambiguos; revise el catálogo antes de continuar.', 'CURSO_AMBIGUO', 409);
+        if (!matching.length) {
+          const id = randomUUID();
+          await dbRun(store, 'INSERT INTO courses(id,year,name) VALUES(?,?,?)', id, course.year, course.name);
+          await auditInTransaction(store, user.id, 'course.create.import', id, { year: course.year, name: course.name, standalone: true });
+          created++;
+        }
+      }
+      return { created, year };
+    });
   };
 
   const commit = async (user, input = {}) => {
@@ -517,5 +552,5 @@ export function createSchoolImport(store, svc) {
     });
     return { ...result, year };
   };
-  return { preview, commit };
+  return { preview, commit, createCourses };
 }

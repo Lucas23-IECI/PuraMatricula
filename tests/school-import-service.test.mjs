@@ -142,6 +142,30 @@ test('commit requiere creación explícita, crea curso y ficha con procedencia E
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('crear cursos pendientes por separado no guarda fichas con observaciones', async () => {
+  const { dir, store } = openQaStore();
+  try {
+    ensureImportFields(store);
+    const importer = createSchoolImport(store, svc);
+    const invalidWorkbook = {
+      Usuarios: [
+        ['ID de Usuario (no modificar)', 'RUT', 'DV', 'Nombres', 'Apellidos', 'Rol', 'Curso', 'Sección'],
+        ['erp-course-valid', '11111111', '1', 'Estudiante válido', 'Sintético', 'Estudiante', '1° Básico', 'A'],
+        ['erp-course-invalid', '11111111', '2', 'Estudiante con observación', 'Sintético', 'Estudiante', '1° Básico', 'A']
+      ]
+    };
+    const preview = await importer.preview(user, { workbook: invalidWorkbook, year: 2026, courses: [] });
+    assert.ok(preview.errors.length);
+    assert.ok(preview.courseTicket);
+    assert.equal(store.db.prepare('SELECT count(*) AS count FROM courses').get().count, 0);
+    const created = await importer.createCourses(user, { year: 2026, coursesToCreate: preview.coursesToCreate, courseTicket: preview.courseTicket });
+    assert.equal(created.created, 1);
+    assert.equal(store.db.prepare('SELECT count(*) AS count FROM courses').get().count, 1);
+    assert.equal(store.db.prepare('SELECT count(*) AS count FROM records').get().count, 0);
+    assert.equal(store.verifyAudit(), true);
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('preview retiene ticket solo para cursos pendientes y bloquea fecha o campo reservado', async () => {
   const { dir, store } = openQaStore();
   try {
