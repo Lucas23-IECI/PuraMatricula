@@ -38,7 +38,7 @@ try {
     $dockerCommand=Get-Command docker -ErrorAction SilentlyContinue;if(-not $dockerCommand){Fail 'No se encontró Docker. Abra Docker Desktop y vuelva a ejecutar el actualizador.'};$script:Docker=$dockerCommand.Source
     $engine=Invoke-Docker @('version','--format','{{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}') -Capture
     if($engine -notmatch '^(\d+)\.\S+\s+linux/amd64$' -or [int]$Matches[1] -lt 28){Fail 'Se requiere Docker Engine 28 o posterior con motor Linux amd64.'}
-    $endpoint='';if(-not $env:DOCKER_CONTEXT -and $env:DOCKER_HOST){$endpoint=[string]$env:DOCKER_HOST}else{$endpoint=[string]((Invoke-Docker @('context','inspect','--format','{{.Endpoints.docker.Host}}') -Capture)[0])};$endpoint=$endpoint.Trim();if($endpoint -notmatch '^(npipe:/{2,4}\.\/pipe\/|unix:/{2,3})'){Fail 'Seleccione el contexto local de Docker Desktop.'}
+    $endpoint='';if(-not $env:DOCKER_CONTEXT -and $env:DOCKER_HOST){$endpoint=[string]$env:DOCKER_HOST}else{$contextEndpoint=@(Invoke-Docker @('context','inspect','--format','{{.Endpoints.docker.Host}}') -Capture);$endpoint=[string]$contextEndpoint[0]};$endpoint=$endpoint.Trim();if($endpoint -notmatch '^(npipe:/{2,4}\.\/pipe\/|unix:/{2,3})'){Fail 'Seleccione el contexto local de Docker Desktop.'}
     $envPath=Join-Path $target 'docker.env';$composePath=Join-Path $target 'compose.local.yaml';$assistant=Join-Path $target 'scripts\docker-colegio.ps1'
     foreach($required in @($envPath,$composePath,$assistant)){if(-not(Test-Path -LiteralPath $required -PathType Leaf)){Fail "Falta un archivo de la instalación: $required"}}
     $lines=@(Get-Content -LiteralPath $envPath);if((Get-EnvValue $lines 'MATRICULA_DOCKER_MODE') -cne 'local'){Fail 'La instalación existente no está en modo local.'}
