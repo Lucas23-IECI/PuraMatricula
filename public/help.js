@@ -236,7 +236,7 @@ const enrollmentHelpTopics={
     ],
     [
       "Entiende los resultados",
-      "Revisa todas las páginas de la previsualización usando los números, Anterior/Siguiente y Por página. Nueva ficha crea un borrador; Coincide y Revisión manual se omiten. Revisa las diferencias manuales en el expediente. Cambios de contacto permite seleccionar actualizaciones.",
+      "Los cursos pendientes aparecen aparte de las observaciones de identificación. Puedes descargar las observaciones de todo el lote. Si verificaste un posible IPE en el registro oficial, marca esa fila y vuelve a previsualizar; eso todavía no guarda la ficha. Las filas que coinciden o requieren revisión manual se omiten.",
       "import"
     ],
     [

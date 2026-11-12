@@ -12,6 +12,8 @@ Antes de incorporar estudiantes, cree un respaldo inicial. En **Organización �
 
 El [instalador para Windows](https://github.com/Lucas23-IECI/PuraMatricula/releases/latest/download/PuraMatricula-Instalador-Windows.zip) incluye la imagen Docker. Extraiga todo el ZIP, abra Docker Desktop y haga doble clic en **INSTALAR MATRICULA**. La entrega se verifica con Docker y datos sintéticos en un volumen descartable. No incluye el padrón, una base de demostración, respaldos ni credenciales. Consulte [cómo generar y adaptar la entrega](docs/ENTREGA-REUTILIZABLE.md).
 
+Las actualizaciones de una instalación existente se hacen con **ACTUALIZAR MATRICULA** desde una entrega nueva. El actualizador conserva la base, el puerto y las cuentas, crea un respaldo cifrado antes de cambiar la imagen y revierte la configuración si la nueva imagen no pasa la comprobación. No inicializa otra base ni borra volúmenes.
+
 ## Alumnos y archivos con formatos distintos
 
 Además del alta y edición individual, la importación reconoce el Excel Usuarios del ERP, padrones administrativos y libros con una hoja por curso. La previsualización permite incluir o excluir hojas, indicar la fila de encabezados, ajustar columnas y elegir cursos existentes. No inventa año ni sección. Hasta 500 estudiantes y 2 MB por lote; bloquea identidades inválidas, duplicados y formatos ambiguos antes de confirmar.

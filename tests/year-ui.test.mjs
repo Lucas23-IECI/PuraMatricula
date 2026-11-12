@@ -12,7 +12,7 @@ function sourceBetween(start,end){
 }
 const yearsSource=sourceBetween('function schoolYearRange(){','async function init(');
 const cacheSource=sourceBetween('let listRequest=','async function openRecord(');
-const importInvalidationSource=sourceBetween('function invalidateImport(){','function renderImport(){');
+const importInvalidationSource=sourceBetween('function invalidateImport(','function renderImport(){');
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return {promise,resolve};};
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const plain=value=>JSON.parse(JSON.stringify(value));
@@ -61,6 +61,7 @@ test('cambiar año elimina selección, ficha, cachés e importación anteriores 
   const f=fixture(),{state,ui}=f;
   Object.assign(state,{course:'curso-anterior',status:'draft',q:'consulta anterior',page:7,auditSnapshot:90,record:{id:'ficha-ficticia'},draft:{address:'Dato sintético'},dirty:true,conflict:true,importRows:[{id:'fila-ficticia'}],importTicket:'ticket-ficticio',importKind:'school',importOptions:{columnMapping:{names:'Persona'}}});
   state.importPreview={ticket:state.importTicket,rows:state.importRows};
+  state.importIpeReviewValid=true;state.importOptions.confirmedIpeRows=[{sheet:'Hoja sintética',row:2}];state.importOptions.ipeConfirmationToken='token-ficticio';
   const preview=ui.importPreviewWorkspace();preview.rows.page=4;preview.updates.add(0);preview.createCourses=true;
   const report=ui.reportsView();Object.assign(report,{course:'curso-anterior',q:'consulta anterior',status:'draft',page:8,coursePage:4});
   ui.recordsCache.set('año-anterior',{items:[{id:'ficticio'}]});ui.collectionPages.set('página-anterior',{page:6,pageSize:50});
@@ -68,6 +69,7 @@ test('cambiar año elimina selección, ficha, cachés e importación anteriores 
   assert.equal(state.year,1950);assert.equal(state.view,'reports');
   for(const field of ['course','status','q'])assert.equal(state[field],'',field);
   for(const field of ['record','auditSnapshot','importRows','importTicket','importPreview','importKind','importOptions'])assert.equal(state[field],null,field);
+  assert.equal(state.importIpeReviewValid,false);
   assert.equal(state.page,1);assert.equal(state.pageSize,50);assert.deepEqual(plain(state.draft),{});assert.equal(state.dirty,false);assert.equal(state.conflict,false);
   assert.equal(ui.recordsCache.has('año-anterior'),false);assert.equal(ui.collectionPages.size,0);assert.equal(ui.getGeneration(),1);
   assert.equal(state.importRevision,1);assert.equal(ui.getImportPreview(),undefined);assert.equal(f.button.disabled,true);assert.match(f.stale.textContent,/previsualizar/);

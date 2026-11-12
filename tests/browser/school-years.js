@@ -41,7 +41,7 @@ async page=>{
     await page.getByLabel('Planilla de estudiantes',{exact:true}).setInputFiles('output/playwright/school-years-'+fixture+'.xlsx');
     const response=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/import/school/preview'&&response.request().method()==='POST');
     await page.getByRole('button',{name:'Previsualizar carga',exact:true}).click();const result=await response;check(result.ok(),'La vista previa falló: '+await result.text());
-    const payload=await result.json();await page.getByRole('heading',{name:payload.rows.length+' estudiantes revisados',exact:true}).waitFor();return payload;
+    const payload=await result.json();await page.getByRole('heading',{name:payload.summary.detectedRows+' '+(payload.summary.detectedRows===1?'fila de estudiante detectada':'filas de estudiantes detectadas'),exact:true}).waitFor();return payload;
   };
   const confirmAnnual=async year=>{
     const confirm=page.locator('[data-action="commit-import"]');check(await confirm.isDisabled(),'La matrícula anual se aplicaría sin seleccionarla.');

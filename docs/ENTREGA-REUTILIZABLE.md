@@ -9,6 +9,8 @@
 
 La imagen va dentro del ZIP. El servidor no necesita clonar el repositorio, instalar Node ni compilar. La base empieza vacía. Este modo solo se usa desde el PC servidor; para acceso de red, consulte [Docker y HTTPS](DOCKER-COLEGIO.md). Si ya hay una instalación, conserve su volumen y siga el procedimiento de actualización.
 
+Para una instalación existente, la entrega incluye **ACTUALIZAR MATRICULA.cmd**. Ese recorrido conserva el puerto y el volumen, crea un respaldo cifrado con el asistente instalado y cambia solamente la imagen de esta entrega. El actualizador está limitado a saltos de imagen sin migraciones de base declaradas. Si el servicio no supera la comprobación, restaura el `docker.env` anterior y vuelve a iniciar la imagen anterior; el volumen nunca se borra.
+
 ## Preparar y publicar otra versión
 
 Desde el repositorio, use Node.js 24, npm, Docker con Buildx y `tar`. Prepare la entrega desde un commit limpio que esté publicado en GitHub y corresponda exactamente a la versión a entregar:
@@ -21,7 +23,7 @@ npm run release:windows
 
 El resultado queda en `output/release/windows-<stamp>/`: el instalador `PuraMatricula-Instalador-Windows.zip` y su archivo `.sha256`. Los insumos se limitan a la aplicación, los scripts, la configuración pública, la guía y la imagen Linux amd64. Revise que no haya datos reales, cuentas, respaldos, certificados privados ni secretos en el ZIP o el código de la versión.
 
-Pruebe el ZIP extraído en un entorno Docker separado y vacío: doble clic, inicio de sesión, acceso directo, reinicio y respaldo/restauración con datos sintéticos. En **GitHub → Releases**, cree una versión con una etiqueta nueva sobre el mismo commit y adjunte el ZIP y el checksum. Mantenga el nombre del ZIP para conservar el enlace `releases/latest/download/PuraMatricula-Instalador-Windows.zip` cuando esa entrega sea la más reciente. Compruebe la descarga y su SHA-256 antes de compartir el enlace. Si el repositorio es privado, quien lo descargue necesita acceso.
+Pruebe el ZIP extraído en un entorno Docker separado y vacío: doble clic, inicio de sesión, acceso directo, reinicio y respaldo/restauración con datos sintéticos. Pruebe también el actualizador sobre una instalación sintética ya inicializada, con un puerto distinto, verificando que no cambie el volumen y que una falla vuelva a la imagen anterior. En **GitHub Releases**, cree una versión con una etiqueta nueva sobre el mismo commit y adjunte el ZIP y el checksum. Mantenga el nombre del ZIP para conservar el enlace `releases/latest/download/PuraMatricula-Instalador-Windows.zip` cuando esa entrega sea la más reciente. Compruebe la descarga y su SHA-256 antes de compartir el enlace. Si el repositorio es privado, quien lo descargue necesita acceso.
 
 ## Adaptar a otro colegio
 

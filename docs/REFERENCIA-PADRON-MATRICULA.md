@@ -38,3 +38,11 @@ La revisión inicial encontró que el importador de `Usuarios` no reconocía est
 6. Probar con un fixture completamente ficticio: hojas con y sin numeración, niveles de párvulos, variantes de nombre de hoja, filas vacías, curso sin resolver, RUT inválido y duplicado entre dos hojas. No convertir el archivo real en fixture.
 
 Este padrón sirve para iniciar las fichas con identidad y contacto. No contiene la ficha completa, sus documentos ni sus autorizaciones. El destino operativo sigue siendo el servidor del Colegio Domingo Santa María; una integración con la aplicación escolar queda para una decisión posterior.
+
+## Resolver observaciones antes de guardar
+
+La vista previa distingue las filas detectadas, las que aparecen en la lista de revisión y las que quedaron fuera. Los cursos pendientes se muestran agrupados por destino, con la cantidad de filas por curso. Usa **Revisar hojas y cursos** para asignar un curso existente o, si corresponde, autorizar la creación de los cursos pendientes cuando se pueda confirmar la carga. El nombre de una hoja no acredita la sección.
+
+El filtro **Tipo de observación** permite revisar posibles IPE, otras identificaciones y duplicados sin quitar el bloqueo del lote. Puedes descargar un informe de observaciones de todo el lote para revisión interna, con ubicación por hoja y fila. Las hojas están numeradas en el orden de **Hojas y cursos**.
+
+Si el registro oficial confirma un IPE, marca **Confirmé que es un IPE** en esa fila y pulsa **Volver a previsualizar**. Puedes desmarcarlo en **IPE declarados en la revisión** y revisar nuevamente. Esto conserva el identificador, se aplica al archivo y la configuración de origen revisados y no guarda fichas hasta confirmar la carga. También se admite una columna `Tipo de documento` con `IPE` explícito. Las demás identificaciones y los duplicados se resuelven contra el registro oficial; no se modifica el dígito ni se elige una fila por su orden. Verifica el año y los cursos antes de guardar.

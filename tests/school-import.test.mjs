@@ -207,6 +207,75 @@ test('admite otro documento solo con tipo explícito y rechaza mappings hacia cr
   assert.ok(!access.sheetSummaries[0].headers.some(header=>/Contraseña|Clave/.test(header)));
 });
 
+test('un posible IPE solo se sugiere para revisar y sigue exigiendo un tipo explícito', () => {
+  const header=[...courseHeaders,'Tipo de documento'];
+  const possibleIpe='100.000.000-7';
+  const unresolved=normalizeSchoolWorkbook({'1° Básico':[
+    header,[...courseStudent(possibleIpe),''],[...courseStudent('100.000.001-7'),''],
+    [...courseStudent('11111111-0'),'RUN'],[...courseStudent('11111111-1'),'Otro tipo sin confirmar']
+  ]},{year:2026});
+  assert.deepEqual(unresolved.errors.map(({code,reason})=>[code,reason]),[
+    ['RUT_INVALIDO','possibleIpe'],['RUT_INVALIDO','format'],
+    ['RUT_INVALIDO','checkDigit'],['RUT_INVALIDO','unknownDocumentType']
+  ]);
+  assert.ok(!JSON.stringify(unresolved.errors).includes(possibleIpe));
+  assert.equal(unresolved.rows.length,0);
+  assert.equal(unresolved.canImport,false);
+  const declared=normalizeSchoolWorkbook({'1° Básico':[header,[...courseStudent(possibleIpe),'IPE']]},{year:2026});
+  assert.equal(declared.canImport,true);
+  assert.equal(declared.rows[0].data.identifierType,'IPE');
+  assert.equal(declared.rows[0].data.identifier,possibleIpe);
+  assert.equal(declared.summary.possibleIpeIssues,0);
+});
+
+test('la confirmación de un IPE afecta solo su ubicación y conserva el identificador', () => {
+  const sheet='1° Básico', possible='100.000.000-7';
+  const workbook={[sheet]:[[...courseHeaders,'Tipo de documento'],[...courseStudent(possible),''],
+    [...courseStudent('100.000.001-7'),''],[...courseStudent(possible),'Pasaporte']]};
+  const confirmedIpeRows=[{sheet,row:2}];
+  const result=normalizeSchoolWorkbook(workbook,{year:2026,confirmedIpeRows});
+  assert.deepEqual(result.confirmedIpeRows,confirmedIpeRows);
+  assert.equal(result.rows[0].data.identifier,possible);
+  assert.equal(result.rows[0].data.identifierType,'IPE');
+  assert.equal(result.rows[0].identity.type,'IPE_MINEDUC');
+  assert.equal(result.rows[0].data.sourceIdentifierType,'');
+  assert.equal(result.rows[1].data.identifierType,'Pasaporte');
+  assert.equal(result.errors[0].row,3);
+  assert.equal(result.canImport,false);
+
+  const duplicate=normalizeSchoolWorkbook({[sheet]:[courseHeaders,courseStudent(possible),courseStudent(possible)]},
+    {year:2026,confirmedIpeRows:[{sheet,row:2},{sheet,row:3}]});
+  assert.equal(duplicate.errors[0].code,'DUPLICADO_IDENTIDAD');
+  assert.equal(duplicate.canImport,false);
+});
+
+test('la confirmación IPE obsoleta, ambigua o manipulada bloquea el lote', () => {
+  const sheet='1° Básico', possible='100.000.000-7';
+  const workbook={[sheet]:[[...courseHeaders,'Tipo de documento'],[...courseStudent(possible),''],
+    [...courseStudent('100.000.001-7'),''],[...courseStudent(possible),'Pasaporte']]};
+  const location={sheet,row:2};
+  const badOptions=[
+    {confirmedIpeRows:[location,location]},
+    {confirmedIpeRows:[{sheet,row:'2'}]},
+    {confirmedIpeRows:[{sheet,row:1}]},
+    {confirmedIpeRows:[{sheet,row:2,identifier:'no-admitido'}]},
+    {confirmedIpeRows:[{sheet:'1° BASICO',row:2}]},
+    {confirmedIpeRows:[{sheet,row:3}]},
+    {confirmedIpeRows:[{sheet,row:4}]},
+    {confirmedIpeRows:[{sheet,row:10001}]},
+    {confirmedIpeRows:Array.from({length:501},(_,index)=>({sheet,row:index+2}))},
+    {confirmedIpeRows:null},
+    {confirmedIpeRows:[location],sheetMappings:{[sheet]:{include:false}}}
+  ];
+  for(const options of badOptions){
+    const result=normalizeSchoolWorkbook(workbook,{year:2026,...options});
+    assert.ok(result.errors.some(issue=>issue.code==='IPE_CONFIRMATION_INVALID'));
+    assert.equal(result.canImport,false);
+    assert.deepEqual(result.confirmedIpeRows,[]);
+    assert.ok(result.rows.every(row=>row.data.identifierType!=='IPE'));
+  }
+});
+
 test('el límite cuenta todas las hojas y filas inválidas e impide un lote parcial', () => {
   const result=normalizeSchoolWorkbook({'1° Básico':[courseHeaders,courseStudent()],'2° Básico':[courseHeaders,courseStudent('11111112-K'),courseStudent('inválido')]},{maxRows:2});
   assert.ok(result.errors.some(issue=>issue.code==='LIMITE_FILAS'));

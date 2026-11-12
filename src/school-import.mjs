@@ -7,7 +7,7 @@
  */
 
 import { parseSchoolYear, schoolYearRange } from './school-years.mjs';
-import { assertSafeXlsx } from './xlsx-safety.mjs';
+import { assertSafeXlsx, XLSX_LIMITS } from './xlsx-safety.mjs';
 
 const STUDENT_ROLES = new Set(['estudiante', 'alumno', 'student']);
 const SOURCE_YEAR_HEADERS = new Set(['ano', 'periodo', 'anoescolar', 'anomatricula', 'anodematricula', 'matricula']);
@@ -154,6 +154,10 @@ export function validateRut(rut, dv) {
   const body = text(rut).replace(/\D/g, '');
   const check = text(dv).toUpperCase().replace(/[^0-9K]/g, '');
   if (!/^\d{7,8}$/.test(body) || !/^[0-9K]$/.test(check)) return false;
+  return modulo11Digit(body) === check;
+}
+
+function modulo11Digit(body) {
   let sum = 0;
   let multiplier = 2;
   for (const digit of [...body].reverse()) {
@@ -161,8 +165,7 @@ export function validateRut(rut, dv) {
     multiplier = multiplier === 7 ? 2 : multiplier + 1;
   }
   const value = 11 - (sum % 11);
-  const expected = value === 11 ? '0' : value === 10 ? 'K' : String(value);
-  return expected === check;
+  return value === 11 ? '0' : value === 10 ? 'K' : String(value);
 }
 
 export function normalizeDate(value) {
@@ -427,33 +430,45 @@ export function normalizeAdministrativeRows(rows, { sheet = 'Estudiantes' } = {}
   return inspectSheet(rows).entries.map(({ row, rowNumber }) => normalizeAdministrativeRow(row, { rowNumber, sheet }));
 }
 
-function normalizeCourseRosterRow(raw, { mapping, rowNumber, sheet, year, courseName, courseId, contactOwner, addressOwner }) {
+function normalizeCourseRosterRow(raw, { mapping, rowNumber, sheet, year, courseName, courseId, contactOwner, addressOwner, confirmIpe }) {
   const role = firstValue(raw, ['Rol', 'role']);
   if (role && !STUDENT_ROLES.has(normalizeRole(role))) return { row: null, ignored: rowIssue(rowNumber, 'ROL_IGNORADO', 'La fila no corresponde a un estudiante; se omitió.', { sheet, role }) };
   const get = key => mappedValue(raw, mapping, key);
   const names = get('names'), surname = get('surname'), secondSurname = get('secondSurname'), identifierRaw = get('identifier');
   if (![names, surname, secondSurname, identifierRaw].some(Boolean)) return { row: null, ignored: rowIssue(rowNumber, 'FILA_SIN_ESTUDIANTE', 'Se omitió una fila sin datos de estudiante.', { sheet }) };
   const errors = [], warnings = [];
-  const issue = (code, message) => rowIssue(rowNumber, code, message, { sheet });
+  const issue = (code, message, details = {}) => rowIssue(rowNumber, code, message, { sheet, ...details });
   if (!names) errors.push(issue('NOMBRES_AUSENTES', 'La fila no tiene nombres de estudiante.'));
   if (!surname) errors.push(issue('APELLIDO_AUSENTE', 'La fila no tiene apellido paterno de estudiante.'));
-  const rut = normalizeRutAndDv(identifierRaw), validRun = /^(\d{7,8})-?([0-9K])$/.test(identifierRaw.toUpperCase().replace(/[.\s]/g, '')) && validateRut(rut.rut, rut.dv), inputType = get('identifierType'), typeKey = normalizeHeader(inputType);
+  const compactIdentifier = identifierRaw.toUpperCase().replace(/[.\s]/g, '');
+  const rut = normalizeRutAndDv(identifierRaw), runShape = /^\d{7,8}-?[0-9K]$/.test(compactIdentifier);
+  const validRun = runShape && validateRut(rut.rut, rut.dv), inputType = get('identifierType'), typeKey = normalizeHeader(inputType);
   const explicitType = /^(run|rut|runchile|runchileno)$/.test(typeKey) ? 'RUN' : /^(ipe|ipemineduc)$/.test(typeKey) ? 'IPE' : /^pasaporte$/.test(typeKey) ? 'Pasaporte' : /^(otro|documentoextranjero)$/.test(typeKey) ? 'Otro' : null;
-  const identifierType = inputType ? explicitType : validRun ? 'RUN' : null;
+  const ipeShape = !inputType && identifierRaw.length <= 80 && /^(1\d{8})-?([0-9K])$/.exec(compactIdentifier);
+  const possibleIpe = Boolean(ipeShape && modulo11Digit(ipeShape[1]) === ipeShape[2]);
+  const ipeConfirmed = Boolean(confirmIpe && possibleIpe);
+  const identifierType = inputType ? explicitType : validRun ? 'RUN' : ipeConfirmed ? 'IPE' : null;
   if (!identifierRaw) errors.push(issue('IDENTIDAD_AUSENTE', 'La fila no tiene identificación de estudiante.'));
-  else if (!identifierType || (identifierType === 'RUN' && !validRun)) errors.push(issue('RUT_INVALIDO', 'Revise el RUN y su dígito verificador o indique un tipo de documento explícito.'));
+  else if (!identifierType || (identifierType === 'RUN' && !validRun)) {
+    // A compatible shape is only a prompt to review the document.
+    if (inputType && !explicitType) errors.push(issue('RUT_INVALIDO', 'Tipo de documento no reconocido. Indique RUN, IPE, Pasaporte u Otro según el documento de respaldo.', { reason: 'unknownDocumentType' }));
+    else if (possibleIpe) errors.push(issue('RUT_INVALIDO', 'Posible IPE. Confirma el tipo en el registro oficial y conserva el número original.', { reason: 'possibleIpe' }));
+    else if (runShape) errors.push(issue('RUT_INVALIDO', 'El dígito verificador del RUN no coincide. Revise el identificador completo en el documento de respaldo.', { reason: 'checkDigit' }));
+    else errors.push(issue('RUT_INVALIDO', 'El formato no corresponde a un RUN completo. Revise la identificación y declare otro tipo solo si está confirmado.', { reason: 'format' }));
+  }
   if (identifierRaw.length > 80) errors.push(issue('IDENTIFICADOR_LARGO', 'El identificador supera 80 caracteres; revise la columna asignada.'));
-  const identifier = identifierType === 'RUN' ? `${rut.rut}-${rut.dv}` : identifierRaw.toUpperCase();
+  const identifier = identifierType === 'RUN' ? `${rut.rut}-${rut.dv}` : ipeConfirmed ? identifierRaw : identifierRaw.toUpperCase();
   const guardianRaw = get('guardianIdentifier'), guardian = normalizeRutAndDv(guardianRaw);
   const guardianIdentifier = guardianRaw && validateRut(guardian.rut, guardian.dv) ? `${guardian.rut}-${guardian.dv}` : guardianRaw;
   if (guardianRaw && !validateRut(guardian.rut, guardian.dv)) warnings.push(issue('RUT_APODERADO_INVALIDO', 'El identificador del apoderado requiere revisión.'));
   const birthRaw = get('birthDate'), birthDate = normalizeDate(birthRaw);
   if (birthRaw && !birthDate) errors.push(issue('FECHA_INVALIDA', 'La fecha de nacimiento requiere revisión.'));
-  if (errors.length) return { row: null, errors, warnings };
+  if (errors.length) return { row: null, errors, warnings, ipeConfirmed };
   const guardianNames = get('guardianNames'), guardianSurname = get('guardianSurname'), guardianSecondSurname = get('guardianSecondSurname');
   const contactPhone = get('contactPhone'), contactEmail = get('contactEmail'), address = get('address'), commune = get('commune');
   const data = {
     names, surname, secondSurname, identifierType, identifier, birthDate,
+    ...(ipeConfirmed ? { sourceIdentifierType: '' } : {}),
     guardianName: [guardianNames, guardianSurname, guardianSecondSurname].filter(Boolean).join(' '), guardianIdentifier,
     sourceGuardianNames: guardianNames, sourceGuardianSurname: guardianSurname, sourceGuardianSecondSurname: guardianSecondSurname,
     sourceSheet: sheet, sourceRow: String(rowNumber), sourceContactPhone: contactPhone, sourceContactEmail: contactEmail,
@@ -469,11 +484,12 @@ function normalizeCourseRosterRow(raw, { mapping, rowNumber, sheet, year, course
   const identityType = identifierType === 'RUN' ? 'RUN_CHILE' : identifierType === 'IPE' ? 'IPE_MINEDUC' : 'DOCUMENTO_EXTRANJERO';
   const row = {
     rowNumber, sourceSheet: sheet, origin: 'MATRICULA_POR_CURSO', originId: `${identifierType}:${identifier.replace(/[.\s-]/g, '').toUpperCase()}`,
+    ...(ipeConfirmed ? { ipeConfirmed: true } : {}),
     identity: { type: identityType, value: identifier, rut: identifierType === 'RUN' ? rut.rut : null, dv: identifierType === 'RUN' ? rut.dv : null, sourceId: null, documentType: identifierType, country: null },
     courseName: selectedCourse, section: get('section') || null, courseId: courseId || null, courseYear: year,
     data, fields: data, account: null
   };
-  return { row, errors, warnings };
+  return { row, errors, warnings, ipeConfirmed };
 }
 
 function administrativeToStudent(row) {
@@ -499,7 +515,24 @@ function administrativeToStudent(row) {
  * Normalize a workbook represented by object rows or matrix rows. The return
  * value is intentionally JSON-safe and contains no raw password/account data.
  */
-export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', year = null, courses = null, maxRows = 5000, columnMapping = {}, sheetMappings = {}, contactOwner = 'unassigned', addressOwner = 'unassigned' } = {}) {
+const MAX_IPE_CONFIRMATIONS = 500;
+const importRowLocation = (sheet, row) => JSON.stringify([sheet, row]);
+
+function selectedIpeLocations(input) {
+  if (!Array.isArray(input) || input.length > MAX_IPE_CONFIRMATIONS) return null;
+  const locations = new Map();
+  for (const entry of input) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).length !== 2 ||
+        !Object.hasOwn(entry, 'sheet') || !Object.hasOwn(entry, 'row') || typeof entry.sheet !== 'string' ||
+        !entry.sheet.trim() || entry.sheet.length > 128 || !Number.isSafeInteger(entry.row) || entry.row < 2 || entry.row > XLSX_LIMITS.rows) return null;
+    const key = importRowLocation(entry.sheet, entry.row);
+    if (locations.has(key)) return null;
+    locations.set(key, { sheet: entry.sheet, row: entry.row });
+  }
+  return locations;
+}
+
+export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', year = null, courses = null, maxRows = 5000, columnMapping = {}, sheetMappings = {}, contactOwner = 'unassigned', addressOwner = 'unassigned', confirmedIpeRows = [] } = {}) {
   const sheets = getSheets(workbook);
   const selectedYear = parseSchoolYear(year), sourceYearValues = new Set();
   let hasSourceYear = false, invalidSourceYear = false;
@@ -507,6 +540,8 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
   const warnings = [];
   const ignored = [];
   const rows = [];
+  const selectedIpe = selectedIpeLocations(confirmedIpeRows);
+  const appliedIpe = [];
   const administrativeRows = [];
   const seen = new Map();
   const sheetSummaries = [];
@@ -515,6 +550,7 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
   if (!isMapping(columnMapping) || !isMapping(sheetMappings)) errors.push(rowIssue(0, 'MAPEO_INVALIDO', 'El mapeo de columnas y hojas debe ser un objeto.'));
   if (!['unassigned', 'guardian', 'student'].includes(contactOwner) || !['unassigned', 'guardian', 'student'].includes(addressOwner)) errors.push(rowIssue(0, 'TITULAR_INVALIDO', 'Indique una titularidad válida para contacto y domicilio.'));
   if (!Number.isInteger(maxRows) || maxRows < 1 || maxRows > 5000) errors.push(rowIssue(0, 'LIMITE_INVALIDO', 'El límite de filas debe estar entre 1 y 5000.'));
+  if (!selectedIpe) errors.push(rowIssue(0, 'IPE_CONFIRMATION_INVALID', 'La selección de IPE no es válida. Limpie las confirmaciones y vuelva a revisar la planilla.'));
   const specs = [];
   for (const [sheet, sheetRows] of Object.entries(sheets)) {
     const config = isMapping(sheetMappings) && Object.hasOwn(sheetMappings, sheet) ? sheetMappings[sheet] : {};
@@ -596,7 +632,8 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
     }
     for (const { row: raw, rowNumber } of info.entries) {
       let normalized;
-      if (kind === 'por_curso') normalized = normalizeCourseRosterRow(raw, { mapping, rowNumber, sheet, year, courseName: config.courseName, courseId: config.courseId, contactOwner, addressOwner });
+      const ipeLocation = selectedIpe?.size && selectedIpe.get(importRowLocation(sheet, rowNumber));
+      if (kind === 'por_curso') normalized = normalizeCourseRosterRow(raw, { mapping, rowNumber, sheet, year, courseName: config.courseName, courseId: config.courseId, contactOwner, addressOwner, confirmIpe: Boolean(ipeLocation) });
       else if (kind === 'usuarios') {
         normalized = normalizeStudentRow(applyErpMapping(raw, mapping, { ...(isMapping(columnMapping) ? columnMapping : {}), ...(config.columnMapping || {}) }), { rowNumber, sheet, origin });
         if(normalized.row){
@@ -625,10 +662,12 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
       summary.studentRows++;
       intendedRows++;
       if (intendedRows > maxRows) continue;
+      if (normalized.ipeConfirmed) appliedIpe.push(ipeLocation);
       if (normalized.errors?.length) { errors.push(...normalized.errors.map(withSheet)); continue; }
       if (normalized.row) addRow(normalized.row);
     }
   }
+  if (selectedIpe && appliedIpe.length !== selectedIpe.size) errors.push(rowIssue(0, 'IPE_CONFIRMATION_INVALID', 'Una o más confirmaciones ya no corresponden a un posible IPE de la selección. Limpie las confirmaciones y vuelva a revisar la planilla.'));
   if (intendedRows > maxRows) errors.push(rowIssue(0, 'LIMITE_FILAS', `El libro contiene ${intendedRows} filas de estudiantes; la carga admite hasta ${maxRows} en total. No se importó un lote parcial.`));
   const sourceYears = [...sourceYearValues].sort((a, b) => a - b);
   const mixedYears = sourceYears.length > 1;
@@ -669,6 +708,7 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
     source: origin,
     yearContext,
     rows,
+    confirmedIpeRows: appliedIpe,
     administrativeRows,
     errors,
     warnings,
@@ -677,8 +717,34 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
     sheets: Object.keys(sheets),
     sheetSummaries,
     mappingTargets: MAPPING_TARGETS,
-    summary: { total: rows.length, errors: errors.length, warnings: warnings.length, ignored: ignored.length, administrative: administrativeRows.length, unresolvedCourses: unresolvedCourses.length },
+    summary: { ...summarizeSchoolImport({ rows, errors, warnings, detectedRows: intendedRows, unresolvedCourses: unresolvedCourses.length }), ignored: ignored.length, administrative: administrativeRows.length },
     canImport: rows.length > 0 && errors.length === 0
+  };
+}
+
+const COURSE_ISSUES = new Set(['CURSO_NO_RESUELTO', 'CURSO_AMBIGUO', 'CURSO_AUSENTE', 'COURSE_MAPPING_INVALID', 'COURSE_PERMISSION_DENIED']);
+const IDENTITY_ISSUES = new Set(['IDENTIDAD_AUSENTE', 'RUT_INVALIDO', 'IDENTIFICADOR_LARGO', 'IDENTIFIER_TYPE_INVALID', 'IDENTIFIER_REQUIRED', 'RUN_INVALID']);
+
+export function summarizeSchoolImport({ rows, errors, warnings, detectedRows, unresolvedCourses }) {
+  const location = (sheet, row) => JSON.stringify([sheet || '', row]);
+  const rowErrors = new Set();
+  const counts = { courseIssues: 0, identityIssues: 0, duplicateIssues: 0, otherIssues: 0, possibleIpeIssues: 0 };
+  let globalError = false;
+  for (const error of errors) {
+    if (error.row) rowErrors.add(location(error.sheet, error.row));
+    else globalError = true;
+    if (COURSE_ISSUES.has(error.code)) counts.courseIssues++;
+    else if (IDENTITY_ISSUES.has(error.code)) {
+      counts.identityIssues++;
+      if (error.reason === 'possibleIpe') counts.possibleIpeIssues++;
+    } else if (error.code === 'DUPLICADO_IDENTIDAD') counts.duplicateIssues++;
+    else counts.otherIssues++;
+  }
+  const candidateRows = rows.length;
+  const valid = globalError ? 0 : rows.filter(row => !rowErrors.has(location(row.sourceSheet, row.rowNumber))).length;
+  return {
+    total: candidateRows, valid, errors: errors.length, warnings: warnings.length, unresolvedCourses,
+    detectedRows, candidateRows, rejectedRows: Math.max(0, detectedRows - candidateRows), ...counts
   };
 }
 

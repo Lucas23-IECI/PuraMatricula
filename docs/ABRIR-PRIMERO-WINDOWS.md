@@ -6,6 +6,12 @@
 
 La base parte vacía y se guarda por separado de Asistencia. El ZIP ya incluye la imagen Docker. Este modo funciona solo desde el mismo PC hasta que se configure HTTPS institucional.
 
+## Actualizar una instalación existente
+
+Si ya existe `C:\PuraMatricula`, no vuelvas a ejecutar el instalador inicial. Descarga la nueva entrega, extrae todo en una carpeta aparte y haz doble clic en **ACTUALIZAR MATRICULA**. El actualizador comprueba la instalación, conserva el puerto, el volumen y las cuentas, crea un respaldo cifrado antes de cambiar la imagen y comprueba el servicio al terminar. Te pedirá la clave del respaldo. Si algo falla, conserva los datos y restaura la configuración de la imagen anterior.
+
+No borres el volumen, no uses `docker compose down -v` y no cambies el puerto durante la actualización. Si la instalación ya usa otro puerto, se conserva automáticamente.
+
 En **Administración → Cuentas y permisos**, cree una cuenta individual para la persona que vaya a usar Matrícula. Antes de cargar el Excel, haga un respaldo cifrado. En **Organización → Importación**, revise el año, las hojas y los cursos en la vista previa antes de confirmar. La importación incorpora fichas como borradores y no crea cuentas.
 
 Si el instalador muestra un error, la ventana permanece abierta. El destino inicial es `C:\PuraMatricula`. Si ya existe la carpeta o el volumen, conserve los datos y siga `docs\DOCKER-COLEGIO.md` de la instalación existente. Para cambiar el destino o el puerto en una instalación nueva, abra PowerShell en la carpeta del ZIP extraído y ejecute, por ejemplo:

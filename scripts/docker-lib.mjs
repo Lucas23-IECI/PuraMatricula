@@ -47,10 +47,14 @@ export function backupDestination(directory,destination){
   if(!tail||tail==='..'||tail.startsWith('..'+sep)||isAbsolute(tail)||!target.endsWith('.dsmbak'))throw Error('El respaldo debe ser un archivo .dsmbak nuevo dentro de la carpeta backups del volumen.');
   return target;
 }
-export async function askUsername(){
+export async function askUsername(label='Usuario de la cuenta administradora: '){
   if(!process.stdin.isTTY)throw Error('Indique --username y --password-stdin para automatización; el asistente normal requiere una terminal.');
-  const prompt=createInterface({input:process.stdin,output:process.stderr});
-  try{return (await prompt.question('Usuario de la cuenta administradora: ')).trim();}finally{prompt.close();}
+  const prompt=createInterface({input:process.stdin,output:process.stderr}),controller=new AbortController();
+  const cancel=()=>controller.abort();
+  prompt.once('SIGINT',cancel);prompt.once('close',cancel);
+  try{return (await prompt.question(label,{signal:controller.signal})).trim();}
+  catch(error){if(controller.signal.aborted)throw Error('Operación cancelada.');throw error;}
+  finally{prompt.off('SIGINT',cancel);prompt.off('close',cancel);prompt.close();}
 }
 export function hiddenQuestion(label){
   if(!process.stdin.isTTY||typeof process.stdin.setRawMode!=='function')throw Error('La contraseña se solicita en una terminal interactiva.');

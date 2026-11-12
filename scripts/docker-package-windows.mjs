@@ -45,13 +45,15 @@ function build(){
 
   const config=Buffer.from(['MATRICULA_DOCKER_MODE=local','MATRICULA_LOCAL_PORT=4319',`MATRICULA_IMAGE=${image}`,'MATRICULA_DATA_VOLUME=puramatricula_data','MATRICULA_LOCAL_NETWORK_NAME=puramatricula_local',''].join('\r\n'));
   const tarBytes=readFileSync(tar),zipName=basename(source.zipPath);
-  const metadata={mode:'local',platform:'linux/amd64',sourceCommit:commit,image,imageId:inspected.Id,imageConfigId:'sha256:'+configId,zip:zipName,zipSha256:digest(sourceBytes),tar:tarName,tarSha256:digest(tarBytes),configSha256:digest(config)};
+  const metadata={kind:'local-update',mode:'local',platform:'linux/amd64',platformImageOnly:true,upgradeFrom:['puramatricula:0.2.0-local-20261109t173905304z'],sourceCommit:commit,image,imageId:inspected.Id,imageConfigId:'sha256:'+configId,zip:zipName,zipSha256:digest(sourceBytes),tar:tarName,tarSha256:digest(tarBytes),configSha256:digest(config)};
   const guide=Buffer.from(sourceFiles['docs/ABRIR-PRIMERO-WINDOWS.md']).toString('utf8');
   const launcher=Buffer.from(sourceFiles['scripts/instalar-matricula.cmd']).toString('ascii').replace(/\r?\n/g,'\r\n');
   const payload={
     'INSTALAR MATRICULA.cmd':Buffer.from(launcher,'ascii'),
+    'ACTUALIZAR MATRICULA.cmd':Buffer.from(Buffer.from(sourceFiles['scripts/actualizar-matricula.cmd']).toString('ascii').replace(/\r?\n/g,'\r\n'),'ascii'),
     'ABRIR-PRIMERO.md':Buffer.from(guide+`\nFuente de esta entrega: ${commit}\n`),
     'INICIAR-EN-EL-SERVIDOR.ps1':sourceFiles['scripts/docker-install-local.ps1'],
+    'ACTUALIZAR-EN-EL-SERVIDOR.ps1':sourceFiles['scripts/docker-update-local.ps1'],
     'docker.local.env':config,
     'ENTREGA.json':Buffer.from(JSON.stringify(metadata,null,2)+'\n'),
     [zipName]:sourceBytes,

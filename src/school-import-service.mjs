@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { parseSchoolWorkbook, normalizeSchoolWorkbook, normalizeHeader, normalizeCourseName } from './school-import.mjs';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { parseSchoolWorkbook, normalizeSchoolWorkbook, normalizeHeader, normalizeCourseName, summarizeSchoolImport } from './school-import.mjs';
 import { hasImportFields, sourceFields } from './import-fields.mjs';
 import { normalizeIdentifier, validateIdentifier } from './fields.mjs';
 import { parseSchoolYear } from './school-years.mjs';
@@ -101,7 +101,7 @@ function stableRows(rows) {
   return rows.map(row => ({
     rowNumber: row.rowNumber, sourceSheet:row.sourceSheet || '', origin: row.origin || SOURCE, originId: row.originId,
     courseId: row.courseId || null, courseName: row.courseName || '', section: row.section || '', year: Number(row.year || row.courseYear || 0), sourceYear: row.sourceYear ?? null,
-    data: sourceData(row), review: row.review
+    data: sourceData(row), review: row.review, ...(row.ipeConfirmed === true ? { ipeConfirmed: true } : {})
   }));
 }
 
@@ -295,11 +295,32 @@ async function assessRow(store, svc, user, candidate, identities, records, templ
 
 async function decodeWorkbook(input) {
   if (input?.workbook) return input.workbook;
-  if (input?.rows || input?.sheets) return input;
+  if (input?.rows || input?.sheets) return { rows: input.rows, sheets: input.sheets };
   const content = input?.content;
   if (!content) throw new SchoolImportError('Adjunte un archivo .xlsx para previsualizar el padrón.', 'FILE_REQUIRED');
   if (typeof content === 'string' && content.length > 16 * 1024 * 1024) throw new SchoolImportError('El archivo supera el límite de importación.', 'FILE_TOO_LARGE', 413);
   try { return Buffer.isBuffer(content) ? content : Buffer.from(content, 'base64'); } catch { throw new SchoolImportError('El contenido base64 del archivo no es válido.', 'FILE_INVALID'); }
+}
+
+function ipeConfirmationToken(store, actor, year, workbook, { columnMapping, sheetMappings }) {
+  if (!store?.mac) return null;
+  const isObject = value => value && typeof value === 'object' && !Array.isArray(value);
+  // Explicit column labels also participate in header discovery, including
+  // labels not related to documents. Keep all of them bound to the preview.
+  const sourceColumns = mapping => isObject(mapping) ? Object.keys(mapping).sort().map(key => [key, mapping[key]]) : [];
+  const sheetOptions = (isObject(sheetMappings) ? Object.keys(sheetMappings) : []).sort().flatMap(sheet => {
+    const config = sheetMappings[sheet];
+    const include = config?.include !== false, headerRow = config?.headerRow ?? null, columns = sourceColumns(config?.columnMapping);
+    return include && headerRow === null && !columns.length ? [] : [[sheet, include, headerRow, columns]];
+  });
+  const binary = workbook instanceof Uint8Array || typeof workbook === 'string';
+  const hash = createHash('sha256').update(binary ? workbook : JSON.stringify(workbook)).digest('hex');
+  return store.mac(JSON.stringify(['school-ipe-confirmation-v1', actor, year, binary, hash, sourceColumns(columnMapping), sheetOptions]));
+}
+
+function validIpeConfirmationToken(expected, given) {
+  return typeof expected === 'string' && /^[0-9a-f]{64}$/.test(expected) && typeof given === 'string' && /^[0-9a-f]{64}$/.test(given) &&
+    timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(given, 'hex'));
 }
 
 /**
@@ -313,10 +334,16 @@ export function createSchoolImport(store, svc) {
     const selectedYear = parseSchoolYear(input.year);
     if (selectedYear === null) throw new SchoolImportError('Indique un año de matrícula válido.', 'YEAR_INVALID');
     const templateInfo = await loadTemplateFields(store);
-    if (templateInfo?.error) return { canImport: false, rows: [], errors: [templateInfo.error], warnings: [], coursesToCreate: [], unresolvedCourses: [], summary: { total: 0, errors: 1 } };
+    if (templateInfo?.error) {
+      const errors = [templateInfo.error];
+      return { canImport: false, rows: [], confirmedIpeRows: [], ipeConfirmationToken: null, errors, warnings: [], coursesToCreate: [], unresolvedCourses: [], summary: summarizeSchoolImport({ rows: [], errors, warnings: [], detectedRows: 0, unresolvedCourses: 0 }) };
+    }
     const templateFields = templateInfo?.fields || [];
     const workbook = await decodeWorkbook(input);
-    const parserOptions={year:selectedYear,maxRows:MAX_ROWS,fileName:input.name||input.fileName||'',columnMapping:input.columnMapping,sheetMappings:input.sheetMappings,contactOwner:input.contactOwner,addressOwner:input.addressOwner};
+    const token = ipeConfirmationToken(store, user.id, selectedYear, workbook, input);
+    const staleIpeConfirmation = Array.isArray(input.confirmedIpeRows) && input.confirmedIpeRows.length > 0 && !validIpeConfirmationToken(token, input.ipeConfirmationToken);
+    const parserOptions={year:selectedYear,maxRows:MAX_ROWS,fileName:input.name||input.fileName||'',columnMapping:input.columnMapping,sheetMappings:input.sheetMappings,contactOwner:input.contactOwner,addressOwner:input.addressOwner,
+      confirmedIpeRows:staleIpeConfirmation ? [] : input.confirmedIpeRows};
     const parsed = Buffer.isBuffer(workbook) || workbook instanceof Uint8Array || typeof workbook === 'string'
       ? await parseSchoolWorkbook(workbook, parserOptions).catch(error=>{throw new SchoolImportError(error.message,error.code||'XLSX_INVALID');})
       : normalizeSchoolWorkbook(workbook, parserOptions);
@@ -326,6 +353,7 @@ export function createSchoolImport(store, svc) {
     const mapped = resolveCourses(parsed.rows, courses, input.courseMapping || {});
     const rows = [];
     const errors = [...(parsed.errors || [])];
+    if (staleIpeConfirmation) errors.push({ row: 0, code: 'IPE_CONFIRMATION_INVALID', message: 'Las confirmaciones de IPE corresponden a otra revisión. Limpie las confirmaciones y vuelva a revisar la planilla.' });
     const warnings = [...(parsed.warnings || [])];
     const candidates = mapped.resolved.map(item => {
       const data = sourceData(item.row);
@@ -364,13 +392,12 @@ export function createSchoolImport(store, svc) {
     const actionable = counts.new + counts.annual + counts.updates;
     const payload = ticketPayload(user.id, templateInfo?.id, year, rows, coursesToCreate);
     const ticket = hasNonCourseErrors || !actionable ? null : store?.mac ? store.mac(payload) : payload;
-    const invalidLocations=new Set(errors.filter(error=>error.row).map(error=>`${error.sheet||''}:${error.row}`));
     return {
       source: parsed.source || SOURCE, fileName: input.name || input.fileName || null, year, yearContext, courses:courses.filter(course=>can(svc,user,'write',course.id)), rows,
-      sheetSummaries:parsed.sheetSummaries||[],mappingTargets:parsed.mappingTargets||[],
+      sheetSummaries:parsed.sheetSummaries||[],mappingTargets:parsed.mappingTargets||[],confirmedIpeRows:parsed.confirmedIpeRows||[],ipeConfirmationToken:token,
       administrativeRows: parsed.administrativeRows || [], coursesToCreate,
       unresolvedCourses: coursesToCreate, errors, warnings, ignored: parsed.ignored || [],
-      summary: { total: rows.length, valid: errors.some(error=>!error.row)?0:Math.max(0,rows.length-invalidLocations.size), errors: errors.length, warnings: warnings.length, unresolvedCourses: coursesToCreate.length, ...counts },
+      summary: { ...summarizeSchoolImport({ rows, errors, warnings, detectedRows: parsed.summary.detectedRows, unresolvedCourses: coursesToCreate.length }), ...counts },
       ticket, canImport: actionable > 0 && errors.length === 0
     };
   };
@@ -469,7 +496,7 @@ export function createSchoolImport(store, svc) {
         if(!annualSource)pending.students.push([studentId, identityHash, inputRow.origin || SOURCE, inputRow.originId]);
         pending.records.push([recordId, studentId, year, courseId, templateInfo.id, 'draft', displayName(data), 1, store.seal(data), now]);
         pending.revisions.push([recordId, 1, user.id, now, store.seal({ year, courseId, status: 'draft', templateId: templateInfo.id, data })]);
-        pending.events.push([recordId, annualSource?'import.annual':'imported', user.id, now, store.seal({ origin: inputRow.origin || SOURCE, originId: inputRow.originId,sourceSheet:inputRow.sourceSheet,sourceRow:inputRow.rowNumber,...(annualSource?{sourceId:annualSource.id,sourceYear:annualSource.year}:{}) })]);
+        pending.events.push([recordId, annualSource?'import.annual':'imported', user.id, now, store.seal({ origin: inputRow.origin || SOURCE, originId: inputRow.originId,sourceSheet:inputRow.sourceSheet,sourceRow:inputRow.rowNumber,...(inputRow.ipeConfirmed===true?{ipeConfirmed:true}:{}),...(annualSource?{sourceId:annualSource.id,sourceYear:annualSource.year}:{}) })]);
         if(annualSource)annual.push(recordId);
         inserted.push(recordId);
       }

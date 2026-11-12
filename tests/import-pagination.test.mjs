@@ -13,14 +13,15 @@ function syntheticPreview(count=70){
     coursesToCreate:Array.from({length:28},(_,index)=>({name:'Curso ficticio '+index})),courses:[{id:'curso-sintetico',name:'Curso de prueba'}]};
 }
 function fixture({data=syntheticPreview(),preferences=new Map()}={}){
-  const state={user:{id:'persona-sintetica',allCourses:true},importKind:'school',importPreview:data,importTicket:'revision-sintetica'};
+  const state={user:{id:'persona-sintetica',allCourses:true},importKind:'school',importPreview:data,importTicket:'revision-sintetica',
+    importOptions:{confirmedIpeRows:structuredClone(data.confirmedIpeRows||[]),ipeConfirmationToken:data.ipeConfirmationToken},importIpeReviewValid:Boolean(data.ipeConfirmationToken)};
   const callbacks=new Map(),details={open:false,ontoggle:null};let refreshes=0;
   const preview={innerHTML:'',onchange:null,querySelector:selector=>selector==='[data-import-warnings]'?details:null};
   const viewKey=(user,section)=>JSON.stringify([user,section]);
   const views={get:(user,section,modes,fallback)=>modes.includes(preferences.get(viewKey(user,section)))?preferences.get(viewKey(user,section)):fallback,
     set:(user,section,mode)=>preferences.set(viewKey(user,section),mode),html:({id,value})=>`<div data-view-control="${id}" data-current-mode="${value}"></div>`,bind:(_root,id,onChange)=>callbacks.set('view:'+id,onChange),chips:()=>'',bindChips:(_root,id,onChange)=>callbacks.set('chips:'+id,onChange)};
   const context=createContext({window:{EnrollmentViews:views},EnrollmentViews:views,state,esc:escape,can:()=>true,courseName:()=> 'Curso ficticio',
-    $:selector=>selector==='#import-preview'?preview:null,refreshImportCommit:()=>refreshes++});
+    $:selector=>selector==='#import-preview'?preview:null,refreshImportCommit:()=>refreshes++,invalidateImport:()=>{state.importTicket=null;}});
   runInContext(read('pagination.js'),context);
   context.EnrollmentPagination={...context.window.EnrollmentPagination,bind:(_root,id,onChange)=>callbacks.set(id,onChange)};
   runInContext(read('import-preview.js')+'\nglobalThis.ui={renderImportPreview,selectedImportUpdates,selectedImportAnnual,importPreviewWorkspace};',context);
@@ -63,6 +64,51 @@ test('observaciones, advertencias y cursos son accesibles completos, sin recorte
   f.page('import-warnings',4);assert.match(f.preview.innerHTML,/Advertencia sintética 34</);assert.doesNotMatch(f.preview.innerHTML,/Advertencia sintética 0</);
   f.page('import-courses',3);assert.match(f.preview.innerHTML,/Curso ficticio 27</);assert.doesNotMatch(f.preview.innerHTML,/Curso ficticio 0</);
   assert.equal(f.state.importPreview.errors.length,29);assert.equal(f.state.importPreview.warnings.length,35);assert.equal(f.state.importPreview.coursesToCreate.length,28);
+});
+
+test('cursos pendientes se agrupan y los filtros de identidad no esconden el bloqueo de todo el lote',()=>{
+  const p=syntheticPreview(2);p.ticket=null;p.summary.detectedRows=5;p.summary.rejectedRows=3;
+  p.errors=[{code:'CURSO_NO_RESUELTO',sheet:'Hoja A',row:2,message:'Curso no resuelto en la fila'},
+    {code:'RUT_INVALIDO',reason:'possibleIpe',sheet:'Hoja A',row:4,message:'Identificación compatible con IPE'},
+    {code:'RUT_INVALIDO',reason:'checkDigit',sheet:'Hoja A',row:5,message:'Dígito no coincide'},
+    {code:'DUPLICADO_IDENTIDAD',sheet:'Hoja B',row:4,firstSheet:'Hoja A',firstRow:3,message:'Identificación repetida'}];
+  p.coursesToCreate=[{name:'Curso pendiente',count:1}];
+  const f=fixture({data:p});
+  assert.match(f.preview.innerHTML,/5 filas de estudiantes detectadas/);
+  assert.match(f.preview.innerHTML,/<strong>2<\/strong> en la lista de revisión/);
+  assert.match(f.preview.innerHTML,/3 observaciones por resolver/);
+  assert.match(f.preview.innerHTML,/1 curso por asignar/);
+  assert.match(f.preview.innerHTML,/Curso pendiente<\/strong> · 1 fila/);
+  assert.match(f.preview.innerHTML,/Revisa también Hoja A · fila 3/);
+  assert.doesNotMatch(f.preview.innerHTML,/Curso no resuelto en la fila/);
+  assert.match(f.preview.innerHTML,/id="create-import-courses"[^>]*disabled/);
+  f.preview.onchange({target:{dataset:{importIssueGroup:'errors'},value:'possibleIpe'}});
+  assert.match(f.preview.innerHTML,/Identificación compatible con IPE/);
+  assert.match(f.preview.innerHTML,/Tipo de documento/);
+  assert.doesNotMatch(f.preview.innerHTML,/Dígito no coincide|Identificación repetida/);
+  assert.match(f.preview.innerHTML,/3 observaciones por resolver/);
+  assert.match(f.preview.innerHTML,/data-action="commit-import"[^>]*disabled/);
+});
+
+test('confirmar y retirar un IPE cambia solo la revisión, conserva hoja y fila y requiere volver a previsualizar',()=>{
+  const p=syntheticPreview(2);p.ipeConfirmationToken='origen-sintetico';p.confirmedIpeRows=[{sheet:'Hoja B',row:8}];
+  p.errors=[{code:'RUT_INVALIDO',reason:'possibleIpe',sheet:'Hoja A',row:8,message:'Posible IPE.'},
+    {code:'RUT_INVALIDO',reason:'checkDigit',sheet:'Hoja A',row:9,message:'Dígito no coincide'}];
+  const f=fixture({data:p});
+  assert.equal((f.preview.innerHTML.match(/data-import-ipe-confirm=/g)||[]).length,1);
+  f.preview.onchange({target:{dataset:{importIpeConfirm:'1'},checked:true}});
+  assert.equal(f.state.importOptions.confirmedIpeRows.length,1,'No se puede confirmar un RUN con dígito inválido');
+  f.preview.onchange({target:{dataset:{importIpeConfirm:'0'},checked:true}});
+  assert.equal(f.state.importTicket,null);
+  assert.equal(JSON.stringify(f.state.importOptions.confirmedIpeRows),JSON.stringify([{sheet:'Hoja B',row:8},{sheet:'Hoja A',row:8}]));
+  assert.match(f.preview.innerHTML,/1 cambio de tipo de documento por revisar/);
+  assert.match(f.preview.innerHTML,/data-import-ipe-refresh/);
+  f.preview.onchange({target:{dataset:{importIpeAppliedRow:'0'},checked:false}});
+  assert.equal(JSON.stringify(f.state.importOptions.confirmedIpeRows),JSON.stringify([{sheet:'Hoja A',row:8}]));
+  assert.match(f.preview.innerHTML,/2 cambios de tipo de documento por revisar/);
+  assert.equal(p.errors.length,2,'La lista original se conserva hasta la revisión del servidor');
+  f.state.importIpeReviewValid=false;f.render();
+  assert.doesNotMatch(f.preview.innerHTML,/data-import-ipe-refresh|data-import-ipe-confirm=/);
 });
 
 test('crear cursos y apertura de advertencias sobreviven a cambios de páginas independientes',()=>{

@@ -117,7 +117,7 @@ async (page) => {
   await page.getByRole('button',{name:'Cambiar tema claro u oscuro'}).click();
   check(await page.locator('#import-preview .skeleton-line').first().evaluate(el=>getComputedStyle(el).backgroundColor==='rgb(49, 68, 87)'),'Skeleton no utiliza los colores del tema oscuro');
   await page.getByRole('button',{name:'Cambiar tema claro u oscuro'}).click();
-  await preview.release();await page.getByRole('heading',{name:'3 estudiantes revisados',exact:true}).waitFor();
+  await preview.release();await page.getByRole('heading',{name:'3 filas de estudiantes detectadas',exact:true}).waitFor();
   check(await page.getByRole('button',{name:'Previsualizar carga',exact:true}).isEnabled(),'Preview quedó bloqueado');
   await page.route('**/api/import/school/preview',route=>route.fulfill({status:503,contentType:'application/json',body:'{"error":"Error de revisión ficticio"}'}));
   await page.getByRole('button',{name:'Previsualizar carga',exact:true}).click();await page.getByText('Error de revisión ficticio',{exact:true}).waitFor();
