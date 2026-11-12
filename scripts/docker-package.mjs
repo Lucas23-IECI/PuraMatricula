@@ -46,7 +46,7 @@ function allowedFile(path) {
   const extension = extname(path).toLowerCase();
   if (parts[0] === 'api') return extension === '.mjs' && !parts.some(part => excludedApiDirectory.test(part)) && !excludedApiFile.test(parts.at(-1));
   if (parts[0] === 'src') return extension === '.mjs';
-  if (parts[0] === 'scripts') return scriptExtensions.has(extension) || path === 'scripts/instalar-matricula.cmd';
+  if (parts[0] === 'scripts') return scriptExtensions.has(extension) || path === 'scripts/instalar-matricula.cmd' || path === 'scripts/actualizar-matricula.cmd';
   if (parts[0] === 'public') return publicExtensions.has(extension);
   return parts.length === 2 && parts[0] === 'docs' && documents.has(parts[1]);
 }
