@@ -44,6 +44,7 @@ try {
     $lines=@(Get-Content -LiteralPath $envPath);if((Get-EnvValue $lines 'MATRICULA_DOCKER_MODE') -cne 'local'){Fail 'La instalación existente no está en modo local.'}
     $volume=Get-EnvValue $lines 'MATRICULA_DATA_VOLUME' 'puramatricula_data';$port=Get-EnvValue $lines 'MATRICULA_LOCAL_PORT' '4319';$oldImage=Get-EnvValue $lines 'MATRICULA_IMAGE'
     if($volume -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$'){Fail 'El volumen configurado no es válido.'};if($port -notmatch '^\d{4,5}$' -or [int]$port -lt 1024 -or [int]$port -gt 65535){Fail 'El puerto local configurado no es válido.'};if($oldImage -notmatch '^puramatricula:[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$'){Fail 'La imagen actual no es válida.'}
+    $allowedImages=@($release.upgradeFrom | ForEach-Object {[string]$_} | Where-Object {$_});if($allowedImages.Count -gt 0 -and $allowedImages -notcontains $oldImage){Fail "La versión instalada no corresponde a esta actualización: $oldImage"}
     if((Invoke-Docker @('volume','ls','--format','{{.Name}}') -Capture) -notcontains $volume){Fail "No existe el volumen de datos configurado: $volume"}
     $project=(Invoke-Docker @('compose','--project-directory',$target,'--env-file',$envPath,'-f',$composePath,'-p','puramatricula','ps','--status','running','--services') -Capture);if($project -notcontains 'puramatricula'){Fail 'Matrícula no está ejecutándose. Inicie primero la instalación y vuelva a intentarlo.'}
     if($SoloComprobar){Write-Host "Actualización preparada para $target. Conserva puerto $port, volumen $volume e imagen anterior $oldImage.";return}
