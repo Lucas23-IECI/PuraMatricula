@@ -47,6 +47,8 @@ try {
     if (-not (Test-Path -LiteralPath $target -PathType Container)) { Fail "No existe la instalación: $target" }
     $release=Read-Json (Join-Path $PSScriptRoot 'ENTREGA.json')
     if ($release.mode -cne 'local' -or $release.kind -cne 'local-update') { Fail 'Esta entrega no es una actualización local de Matrícula.' }
+    $deliveryVersion=$release.PSObject.Properties['deliveryVersion']
+    if($deliveryVersion -and $deliveryVersion.Value -match '^colegio\.[1-9]\d{0,5}$'){Write-Host "Matrícula | Entrega Windows $($deliveryVersion.Value)"}
     if ($release.image -notmatch '^puramatricula:\d+\.\d+\.\d+-local-[0-9]{8}t[0-9]{9}z$') { Fail 'La etiqueta de imagen no es válida.' }
     $tarName=[string]$release.tar;if($tarName -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]*\.tar$'){Fail 'La imagen de actualización está incompleta.'}
     $tar=Join-Path $PSScriptRoot $tarName;if((Sha256 $tar) -cne ([string]$release.tarSha256).ToLowerInvariant()){Fail 'No coincide el SHA-256 de la imagen de actualización.'}
@@ -83,11 +85,15 @@ try {
     $generatedOrigin=$previousLan -and $previousOrigin -match ('^http://'+[regex]::Escape($previousLan)+':\d{4,5}/?$')
     $newLan=if(-not $existingLan){Get-LanAddress}
         elseif($generatedOrigin){if((Get-ActiveAddresses) -contains $previousLan){$previousLan}else{Get-LanAddress}}
-    Write-Host 'Se hará un respaldo cifrado antes de cambiar la imagen.';& $assistant backup;if($LASTEXITCODE -ne 0){Fail 'No se pudo crear el respaldo. La imagen no se cambió.'}
+    $assistantPackage=Join-Path $PSScriptRoot 'docker-colegio.ps1'
+    if(-not (Test-Path -LiteralPath $assistantPackage -PathType Leaf)){Fail 'Falta el asistente de la entrega. Extraiga todo el ZIP en una carpeta nueva.'}
     Invoke-Docker @('image','load','--input',$tar);$newIds=@(Invoke-Docker @('image','inspect','--format','{{.Id}}',$release.image) -Capture);$expected=@($release.imageId,$release.imageConfigId)|Where-Object{$_ -and $_ -match '^sha256:[a-f0-9]{64}$'};if($newIds.Count -ne 1 -or ($expected -notcontains $newIds[0])){Fail 'La imagen cargada no coincide con la entrega.'}
+    Write-Host 'Creando el respaldo automático antes de cambiar la versión...'
+    & $assistantPackage backup -InstallationRoot $target -AutomaticBackup
+    if($LASTEXITCODE -ne 0){Fail 'No se pudo crear el respaldo. Se conserva la versión instalada.'}
     $oldLines=[string[]]$lines;$backupEnv=Join-Path $target ('.docker.env.before-update-'+[Guid]::NewGuid().ToString('N')+'.txt');Copy-Item -LiteralPath $envPath -Destination $backupEnv
     $keepRollbackFiles=$false
-    $composeTarget=Join-Path $target 'compose.local.yaml';$composePackage=Join-Path $PSScriptRoot 'compose.local.yaml';$composeBackup=$null;$shortcutTarget=Join-Path $target 'scripts\crear-acceso-directo.ps1';$shortcutPackage=Join-Path $PSScriptRoot 'crear-acceso-directo.ps1';$shortcutBackup=$null;$assistantPackage=Join-Path $PSScriptRoot 'docker-colegio.ps1';$assistantBackup=$null
+    $composeTarget=Join-Path $target 'compose.local.yaml';$composePackage=Join-Path $PSScriptRoot 'compose.local.yaml';$composeBackup=$null;$shortcutTarget=Join-Path $target 'scripts\crear-acceso-directo.ps1';$shortcutPackage=Join-Path $PSScriptRoot 'crear-acceso-directo.ps1';$shortcutBackup=$null;$assistantBackup=$null
     try{
       $next=Set-EnvValue $oldLines 'MATRICULA_IMAGE' ([string]$release.image)
       if(-not $existingLan){

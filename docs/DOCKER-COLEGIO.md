@@ -212,6 +212,14 @@ El respaldo solicita otra contraseña oculta de al menos dieciséis caracteres. 
 
 `restore` crea un volumen nuevo con nombre `puramatricula_restore_...`, monta el respaldo de entrada como solo lectura y verifica base, auditoría y adjuntos. Las sesiones restauradas se invalidan. No reemplaza el volumen activo ni publica puertos de la restauración. Conserve el nombre del volumen que imprime el asistente.
 
+El actualizador Windows crea su respaldo cifrado sin pedir una contraseña. Junto al archivo `.dsmbak` queda un archivo con el mismo nombre más `.dpapi`, protegido por la cuenta de Windows que ejecutó la actualización. Para probar la recuperación en otro volumen desde ese mismo equipo y cuenta, mantenga juntos ambos archivos y ejecute desde la instalación:
+
+```powershell
+.\scripts\docker-colegio.ps1 restore -BackupFile C:\PuraMatricula\backups\matricula-archivo.dsmbak -AutomaticBackup
+```
+
+El respaldo automático sirve para recuperación en el servidor. Para una copia trasladable a otro equipo use el respaldo manual con contraseña.
+
 Para una aceptación completa, pruebe además el volumen restaurado en otra carpeta de configuración: otro proyecto Compose, otro puerto y otra red. En modo local use un puerto de loopback libre; en modo de red use un origen HTTPS de prueba con su certificado. Declare allí el volumen restaurado como `MATRICULA_DATA_VOLUME`; no reutilice el archivo de configuración activo ni su puerto. El responsable debe abrir una ficha y un adjunto desde el navegador antes de considerar aceptada la recuperación. La promoción de ese volumen al servicio activo es una decisión explícita del administrador.
 
 Custodie al menos una copia fuera del PC servidor y la contraseña por un canal separado. El ZIP de código y una etiqueta de imagen no reemplazan un respaldo de datos. No use `docker compose down -v`, `docker volume prune` ni elimine el volumen para resolver problemas de arranque.

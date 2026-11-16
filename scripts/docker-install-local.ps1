@@ -16,6 +16,8 @@ try {
     if (Test-Path -LiteralPath $target) { throw 'El destino ya existe. Para una instalacion anterior use su asistente y conserve su volumen.' }
     $release = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ENTREGA.json') -Raw | ConvertFrom-Json
     if ($release.mode -cne 'local' -or $release.image -cnotmatch '^puramatricula:\d+\.\d+\.\d+-local-[0-9]{8}t[0-9]{9}z$') { throw 'Esta no es una entrega local de PuraMatricula.' }
+    $deliveryVersion = $release.PSObject.Properties['deliveryVersion']
+    if ($deliveryVersion -and $deliveryVersion.Value -match '^colegio\.[1-9]\d{0,5}$') { Write-Host "Matricula | Entrega Windows $($deliveryVersion.Value)" }
     # The classic image store reports the config digest; containerd reports
     # the manifest digest. Both must come from the same verified image archive.
     $imageIds = @($release.imageId)

@@ -19,7 +19,7 @@ test('Windows acepta la imagen exacta de Andrés y rechaza otra instalación ant
   writeFileSync(join(target,'scripts','docker-colegio.ps1'),"throw 'No debe llamar al asistente durante la precomprobacion'");
   const tar='imagen de prueba';writeFileSync(join(root,'image.tar'),tar);
   writeFileSync(join(root,'ENTREGA.json'),JSON.stringify({
-    kind:'local-update',mode:'local',image:'puramatricula:0.2.0-local-20261112t181057444z',
+    kind:'local-update',mode:'local',deliveryVersion:'colegio.7',image:'puramatricula:0.2.0-local-20261112t181057444z',
     tar:'image.tar',tarSha256:createHash('sha256').update(tar).digest('hex'),
     upgradeFrom:['puramatricula:0.2.0-local-20261109t173905304z'],
     upgradeFromPattern:'^puramatricula:0\\.2\\.0-local-[0-9]{8}t[0-9]{9}z$'
@@ -52,7 +52,7 @@ switch ($DockerArgs[0]) {
     assert.doesNotMatch(readFileSync(calls,'utf8'),/image/);
     return result;
   };
-  const accepted=run();assert.equal(accepted.status,0,accepted.stderr);assert.match(accepted.stdout,/15431.*pura_test_data/);
+  const accepted=run();assert.equal(accepted.status,0,accepted.stderr);assert.match(accepted.stdout,/Entrega Windows colegio\.7/);assert.match(accepted.stdout,/15431.*pura_test_data/);
   for(const [options,message] of [
     [{image:tag.replace('0.2.0','0.2.1')},/no corresponde a esta actualizaci/],
     [{working:join(root,'another')},/pertenece a otra carpeta/],

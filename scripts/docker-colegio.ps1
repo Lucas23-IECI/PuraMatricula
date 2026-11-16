@@ -8,12 +8,16 @@ param(
     [ValidateSet('', 'local', 'tls', 'proxy')]
     [string]$Mode = '',
     [int]$Port = 0,
-    [switch]$UseImage
+    [switch]$UseImage,
+    [switch]$AutomaticBackup,
+    [string]$InstallationRoot
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
+if ($AutomaticBackup -and $Command -notin @('backup','restore')) { throw 'El respaldo automatico solo admite backup o restore.' }
+if ($InstallationRoot -and (-not $AutomaticBackup -or $Command -ne 'backup' -or $InstallationRoot -notmatch '^[A-Za-z]:[\\/]')) { throw 'Indique la carpeta local de la instalacion para el respaldo automatico.' }
+$ProjectRoot = if ($InstallationRoot) { [IO.Path]::GetFullPath($InstallationRoot) } else { Split-Path -Parent $PSScriptRoot }
 $ProjectName = 'puramatricula'
 $ConfigFile = Join-Path $ProjectRoot 'docker.env'
 $ServiceName = 'puramatricula'
@@ -217,9 +221,27 @@ function Backup-Matricula {
     $partial = Join-Path $parent ('.partial-' + $token + '.dsmbak')
     $container = 'puramatricula-backup-' + $token
     $wasRunning = @(Invoke-Compose -Arguments @('ps', '--status', 'running', '--services') -Capture) -contains $ServiceName
+    if ($AutomaticBackup -and -not $wasRunning) { throw 'La instalacion debe estar en ejecucion antes del respaldo de actualizacion.' }
+    $password = $null
+    if ($AutomaticBackup) {
+        $random = New-Object byte[] 32
+        $generator = [Security.Cryptography.RandomNumberGenerator]::Create()
+        try { $generator.GetBytes($random); $password = [Convert]::ToBase64String($random) }
+        finally { $generator.Dispose(); [Array]::Clear($random, 0, $random.Length) }
+        $protectedKey = ConvertTo-SecureString $password -AsPlainText -Force | ConvertFrom-SecureString
+        $keyStream = [IO.File]::Open($destination + '.dpapi', [IO.FileMode]::CreateNew)
+        try {
+            $keyBytes = [Text.Encoding]::ASCII.GetBytes($protectedKey)
+            $keyStream.Write($keyBytes, 0, $keyBytes.Length)
+        } finally { $keyStream.Dispose() }
+    }
     try {
         if ($wasRunning) { Invoke-Compose -Arguments @('stop', '--timeout', '30', $ServiceName) }
-        Invoke-Compose -Arguments @('run', '--pull', 'never', '--name', $container, '--no-deps', $ServiceName, 'node', 'scripts/docker-maintenance.mjs', 'backup', ('/data/matricula/backups/' + $filename))
+        $command = @('run', '--pull', 'never', '--name', $container, '--no-deps')
+        $backupArgs = @($ServiceName, 'node', 'scripts/docker-maintenance.mjs', 'backup', ('/data/matricula/backups/' + $filename))
+        # Old images print manual password advice even when the secret arrived on stdin.
+        if ($AutomaticBackup) { Invoke-ComposeWithSecret -Secret $password -Arguments ($command + @('-T') + $backupArgs + @('--password-stdin')) | Out-Null }
+        else { Invoke-Compose -Arguments ($command + $backupArgs) }
         Invoke-Docker -Arguments @('cp', ($container + ':/data/matricula/backups/' + $filename), $partial)
         [IO.File]::Move($partial, $destination)
         $script:LastBackupFile = $destination
@@ -230,17 +252,32 @@ function Backup-Matricula {
     }
 }
 
+function Invoke-ComposeWithSecret {
+    param([string]$Secret, [string[]]$Arguments)
+    $command = (Get-ComposeArguments) + $Arguments
+    $Secret | & $DockerExecutable @command
+    if ($LASTEXITCODE -ne 0) { throw "Docker termino con codigo $LASTEXITCODE durante el respaldo o recuperacion." }
+}
+
 function Restore-Matricula {
     if (-not $BackupFile) { throw 'Indique -BackupFile con un respaldo cifrado .dsmbak.' }
     $source = (Resolve-Path -LiteralPath $BackupFile -ErrorAction Stop).Path
     if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or [IO.Path]::GetExtension($source) -ne '.dsmbak') { throw 'Seleccione un archivo .dsmbak existente.' }
+    if ($AutomaticBackup) {
+        $protectedKey = Get-Content -LiteralPath ($source + '.dpapi') -Raw
+        $secure = ConvertTo-SecureString $protectedKey
+        try { $password = [Net.NetworkCredential]::new('', $secure).Password } finally { $secure.Dispose() }
+    }
     Assert-LocalImage
     $volume = 'puramatricula_restore_' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ').ToLowerInvariant() + '_' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
     Invoke-Docker -Arguments @('volume', 'create', '--label', 'cl.dsm.puramatricula.purpose=restore-check', '--label', ('com.docker.compose.project=' + $ProjectName), '--label', 'com.docker.compose.volume=matricula-data', $volume)
     $previous = [Environment]::GetEnvironmentVariable('MATRICULA_DATA_VOLUME')
     try {
         [Environment]::SetEnvironmentVariable('MATRICULA_DATA_VOLUME', $volume)
-        Invoke-Compose -Arguments @('run', '--pull', 'never', '--rm', '--no-deps', '-v', ($source + ':/restore-input.dsmbak:ro'), $ServiceName, 'node', 'scripts/docker-maintenance.mjs', 'restore', '/restore-input.dsmbak', '/data/matricula')
+        $command = @('run', '--pull', 'never', '--rm', '--no-deps')
+        $restoreArgs = @('-v', ($source + ':/restore-input.dsmbak:ro'), $ServiceName, 'node', 'scripts/docker-maintenance.mjs', 'restore', '/restore-input.dsmbak', '/data/matricula')
+        if ($AutomaticBackup) { Invoke-ComposeWithSecret -Secret $password -Arguments ($command + @('-T') + $restoreArgs + @('--password-stdin')) }
+        else { Invoke-Compose -Arguments ($command + $restoreArgs) }
     } finally { [Environment]::SetEnvironmentVariable('MATRICULA_DATA_VOLUME', $previous) }
     Write-Host "Restauracion verificada en volumen nuevo: $volume"
     Write-Host 'El volumen activo no cambio. Conserve este nombre; la guia explica la prueba aislada con navegador.'

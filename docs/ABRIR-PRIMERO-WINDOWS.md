@@ -8,7 +8,7 @@ La base parte vacía y se guarda por separado de Asistencia. El ZIP ya incluye l
 
 ## Actualizar una instalación existente
 
-Si ya existe `C:\PuraMatricula`, no vuelvas a ejecutar el instalador inicial. Descarga la nueva entrega, extrae todo en una carpeta aparte y haz doble clic en **ACTUALIZAR MATRICULA**. El actualizador comprueba la instalación, conserva el puerto, el volumen y las cuentas, crea un respaldo cifrado antes de cambiar la imagen y comprueba el servicio al terminar. Te pedirá la clave del respaldo. Si algo falla, conserva los datos y restaura la configuración de la imagen anterior.
+Si ya existe `C:\PuraMatricula`, deja Docker y Matrícula en ejecución, descarga la nueva entrega y extrae todo en una carpeta aparte. Haz doble clic en **ACTUALIZAR MATRICULA**. La ventana muestra el número de entrega. El actualizador crea y protege el respaldo automáticamente, sin pedir ninguna clave. Conserva el puerto, el volumen y las cuentas y comprueba el servicio al terminar. Si algo falla después del cambio, restaura la configuración de la imagen anterior.
 
 No borres el volumen, no uses `docker compose down -v` y no cambies el puerto durante la actualización. Si la instalación ya usa otro puerto, se conserva automáticamente.
 

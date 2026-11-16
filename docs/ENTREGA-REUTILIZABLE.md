@@ -18,10 +18,12 @@ Desde el repositorio, use Node.js 24, npm, Docker con Buildx y `tar`. Prepare la
 ```powershell
 npm ci
 npm test
-npm run release:windows
+npm run release:windows -- --entrega colegio.7
 ```
 
 El resultado queda en `output/release/windows-<stamp>/`: el instalador `PuraMatricula-Instalador-Windows.zip` y su archivo `.sha256`. Los insumos se limitan a la aplicación, los scripts, la configuración pública, la guía y la imagen Linux amd64. Revise que no haya datos reales, cuentas, respaldos, certificados privados ni secretos en el ZIP o el código de la versión.
+
+Para una entrega nueva, cambie `colegio.7` por su número. Es el identificador que se muestra al actualizar, separado de la versión base de la imagen Docker.
 
 Pruebe el ZIP extraído en un entorno Docker separado y vacío: doble clic, inicio de sesión, acceso directo, reinicio y respaldo/restauración con datos sintéticos. Pruebe también el actualizador sobre una instalación sintética ya inicializada, con un puerto distinto, verificando que no cambie el volumen y que una falla vuelva a la imagen anterior. En **GitHub Releases**, cree una versión con una etiqueta nueva sobre el mismo commit y adjunte el ZIP y el checksum. Mantenga el nombre del ZIP para conservar el enlace `releases/latest/download/PuraMatricula-Instalador-Windows.zip` cuando esa entrega sea la más reciente. Compruebe la descarga y su SHA-256 antes de compartir el enlace. Si el repositorio es privado, quien lo descargue necesita acceso.
 

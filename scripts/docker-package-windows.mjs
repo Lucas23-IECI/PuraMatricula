@@ -17,7 +17,8 @@ const windowsPowerShell=bytes=>{
 };
 
 function build(){
-  if(process.argv.length!==2)throw Error('Uso: npm run release:windows');
+  const [flag,deliveryVersion,...extra]=process.argv.slice(2);
+  if(flag!==undefined&&(flag!=='--entrega'||!/^colegio\.[1-9]\d{0,5}$/.test(deliveryVersion||'')||extra.length))throw Error('Uso: npm run release:windows -- --entrega colegio.N');
   if(run('git',['status','--porcelain','--untracked-files=no']))throw Error('Confirma primero los cambios de la entrega. Se requiere un checkout sin cambios rastreados.');
   const commit=run('git',['rev-parse','HEAD']);
   const tracked=new Set(run('git',['ls-tree','-r','--name-only',commit]).split(/\r?\n/));
@@ -51,13 +52,13 @@ function build(){
   const config=Buffer.from(['MATRICULA_DOCKER_MODE=local','MATRICULA_LOCAL_PORT=4319',`MATRICULA_IMAGE=${image}`,'MATRICULA_DATA_VOLUME=puramatricula_data','MATRICULA_LOCAL_NETWORK_NAME=puramatricula_local',''].join('\r\n'));
   const tarBytes=readFileSync(tar),zipName=basename(source.zipPath);
   const escapedVersion=version.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-  const metadata={kind:'local-update',mode:'local',platform:'linux/amd64',platformImageOnly:true,upgradeFrom:['puramatricula:0.2.0-local-20261109t173905304z'],upgradeFromPattern:`^puramatricula:${escapedVersion}-local-[0-9]{8}t[0-9]{9}z$`,sourceCommit:commit,image,imageId:inspected.Id,imageConfigId:'sha256:'+configId,zip:zipName,zipSha256:digest(sourceBytes),tar:tarName,tarSha256:digest(tarBytes),configSha256:digest(config)};
+  const metadata={kind:'local-update',mode:'local',deliveryVersion:deliveryVersion??null,platform:'linux/amd64',platformImageOnly:true,upgradeFrom:['puramatricula:0.2.0-local-20261109t173905304z'],upgradeFromPattern:`^puramatricula:${escapedVersion}-local-[0-9]{8}t[0-9]{9}z$`,sourceCommit:commit,image,imageId:inspected.Id,imageConfigId:'sha256:'+configId,zip:zipName,zipSha256:digest(sourceBytes),tar:tarName,tarSha256:digest(tarBytes),configSha256:digest(config)};
   const guide=Buffer.from(sourceFiles['docs/ABRIR-PRIMERO-WINDOWS.md']).toString('utf8');
   const launcher=Buffer.from(sourceFiles['scripts/instalar-matricula.cmd']).toString('ascii').replace(/\r?\n/g,'\r\n');
   const payload={
     'INSTALAR MATRICULA.cmd':Buffer.from(launcher,'ascii'),
     'ACTUALIZAR MATRICULA.cmd':Buffer.from(Buffer.from(sourceFiles['scripts/actualizar-matricula.cmd']).toString('ascii').replace(/\r?\n/g,'\r\n'),'ascii'),
-    'ABRIR-PRIMERO.md':Buffer.from(guide+`\nFuente de esta entrega: ${commit}\n`),
+    'ABRIR-PRIMERO.md':Buffer.from((deliveryVersion?`Entrega Windows: ${deliveryVersion}\n\n`:'')+guide+`\nFuente de esta entrega: ${commit}\n`),
     'INICIAR-EN-EL-SERVIDOR.ps1':windowsPowerShell(sourceFiles['scripts/docker-install-local.ps1']),
     'ACTUALIZAR-EN-EL-SERVIDOR.ps1':windowsPowerShell(sourceFiles['scripts/docker-update-local.ps1']),
     'compose.local.yaml':sourceFiles['compose.local.yaml'],
