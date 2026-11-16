@@ -186,7 +186,7 @@ test('preview retiene ticket solo para cursos pendientes y bloquea fecha o campo
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('previsualiza un padrón de 390 filas sin mezclar cursos, identificación y duplicados ni confirmar parcialmente', async () => {
+test('padrón de 390 filas: solo guarda las aptas, omite ambos lados de cada duplicado y no duplica al repetir', async () => {
   const { dir, store } = openQaStore();
   try {
     ensureImportFields(store);
@@ -219,6 +219,7 @@ test('previsualiza un padrón de 390 filas sin mezclar cursos, identificación y
     assert.equal(preview.coursesToCreate[0].count,323);
     assert.equal(preview.ticket,null);
     assert.equal(preview.canImport,false);
+    assert.equal(preview.partialImport,null);
     await assert.rejects(importer.commit(user,{
       year:2026, rows:preview.rows, ticket:preview.ticket, coursesToCreate:preview.coursesToCreate, createCourses:true
     }), error => error.code==='IMPORT_TICKET_MISMATCH');
@@ -232,7 +233,61 @@ test('previsualiza un padrón de 390 filas sin mezclar cursos, identificación y
     assert.equal(withCourse.summary.courseIssues,0);
     assert.equal(withCourse.ticket,null);
     assert.equal(withCourse.canImport,false);
+    const { indexes, ticket, pendingCount } = withCourse.partialImport;
+    assert.deepEqual(indexes,Array.from({length:321},(_,i)=>i+2));
+    assert.equal(pendingCount,69);
+    const body={year:2026, rows:indexes.map(index=>withCourse.rows[index]), ticket, coursesToCreate:[], partial:true};
+    await assert.rejects(importer.commit(user,{...body,partial:false}),error=>error.code==='IMPORT_TICKET_MISMATCH');
+    await assert.rejects(importer.commit({...user,id:'otra-cuenta'},body),error=>error.code==='IMPORT_TICKET_MISMATCH');
+    await assert.rejects(importer.commit(user,{...body,createCourses:true}),error=>error.code==='PARTIAL_IMPORT_INVALID');
+    await assert.rejects(importer.commit(user,{...body,rows:[withCourse.rows[0],...body.rows.slice(1)]}),error=>error.code==='IMPORT_TICKET_MISMATCH');
+    assert.equal(store.db.prepare('SELECT count(*) AS count FROM records').get().count,0);
+    const result=await importer.commit(user,body);
+    assert.equal(result.created,321);
+    assert.equal(result.updated,0);
+    assert.equal(result.annual,0);
+    assert.equal(result.partial,true);
+    assert.equal(store.db.prepare('SELECT count(*) AS count FROM records WHERE status=?').get('draft').count,321);
+    assert.equal(store.db.prepare('SELECT count(*) AS count FROM courses').get().count,1);
+    await assert.rejects(importer.commit(user,body),error=>error.code==='IMPORT_REVIEW_STALE');
+    const repeated=await importer.preview(user,{workbook:mixed,year:2026});
+    assert.equal(repeated.summary.unchanged,321);
+    assert.equal(repeated.partialImport,null);
   } finally { store.close(); rmSync(dir,{ recursive:true, force:true }); }
+});
+
+test('la carga parcial retiene documentos ambiguos que el parser descartó y no salta problemas de estructura', async () => {
+  const { dir, store } = openQaStore();
+  try {
+    ensureImportFields(store);
+    store.db.prepare('INSERT INTO courses(id,year,name) VALUES(?,?,?)').run('qa-course',2026,'1° Básico');
+    const importer=createSchoolImport(store,svc);
+    const first=17123456,second=18234567,valid=19345678,last=19456789,invalidDv=checkDigit(first)==='0'?'1':'0';
+    const keys=['Nombres (Estudiante)','Apellido Paterno (Estudiante)','RUT (Estudiante)','Fecha de nacimiento'];
+    const roster={'1° Básico':[keys,['Primero','QA',`${first}-${checkDigit(first)}`],['DV incorrecto','QA',`${first}-${invalidDv}`],
+      ['Segundo','QA',`${second}-${checkDigit(second)}`],['Fecha incorrecta','QA',`${second}-${checkDigit(second)}`,'31/02/2020'],
+      ['Apto','QA',`${valid}-${checkDigit(valid)}`],['Último','QA',`${last}-${checkDigit(last)}`]]};
+    const review=await importer.preview(user,{workbook:roster,year:2026});
+    assert.deepEqual(review.errors.map(error=>error.code),['RUT_INVALIDO','FECHA_INVALIDA']);
+    assert.deepEqual(review.partialImport.indexes,[2,3]);
+    assert.equal(review.partialImport.pendingCount,4);
+    // Raw rejected documents do not appear in the error payload.
+    assert.ok(!JSON.stringify(review.errors).includes(`${first}-${invalidDv}`));
+    const inconsistent=await importer.preview(user,{workbook:{...roster,Desconocida:[['Campo ajeno'],['Contenido']]},year:2026});
+    assert.ok(inconsistent.errors.some(error=>error.code==='HOJA_NO_RECONOCIDA'&&error.row>0));
+    assert.equal(inconsistent.partialImport,null);
+    const differentYear=await importer.preview(user,{workbook:{'1° Básico':roster['1° Básico'].map((row,i)=>[row[0],row[1],row[2],row[3]??'',i===0?'Año matrícula':'2025'])},year:2026});
+    assert.equal(differentYear.year,2025);
+    assert.equal(differentYear.partialImport,null);
+    assert.equal(store.db.prepare('SELECT count(*) AS count FROM records').get().count,0);
+    const sheet='1° Básico',clean=await importer.preview(user,{workbook:{[sheet]:[keys,roster[sheet].at(-1)]},year:2026});
+    await importer.commit(user,{rows:clean.rows,year:2026,ticket:clean.ticket,coursesToCreate:[]});
+    // Another operator saved the last entry between preview and confirmation.
+    // Abort before saving the first eligible entry as well.
+    await assert.rejects(importer.commit(user,{rows:review.partialImport.indexes.map(index=>review.rows[index]),year:2026,ticket:review.partialImport.ticket,coursesToCreate:[],partial:true}),
+      error=>error.code==='IMPORT_REVIEW_STALE');
+    assert.equal(store.db.prepare('SELECT count(*) AS count FROM records').get().count,1);
+  } finally { store.close(); rmSync(dir,{recursive:true,force:true}); }
 });
 
 test('commit revierte curso y primera ficha cuando una fila falla dentro de la transacción', async () => {

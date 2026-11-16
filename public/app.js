@@ -1,5 +1,5 @@
 const $=s=>document.querySelector(s),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state={user:null,csrf:'',meta:null,view:'home',year:null,course:'',status:'',q:'',page:1,pageSize:25,auditSnapshot:null,record:null,tab:'ficha',draft:{},editing:false,dirty:false,saving:false,conflict:false,importRows:null,importTicket:null,importPreview:null,importKind:null,importOptions:null,importRevision:0,importIpeReviewValid:false,recordFilters:{}};
+const state={user:null,csrf:'',meta:null,view:'home',year:null,course:'',status:'',q:'',page:1,pageSize:25,auditSnapshot:null,record:null,tab:'ficha',draft:{},editing:false,dirty:false,saving:false,conflict:false,importRows:null,importTicket:null,importPartialTicket:null,importPreview:null,importKind:null,importOptions:null,importRevision:0,importIpeReviewValid:false,recordFilters:{}};
 let noticeTimer,viewRequest=0,recordRequest=0;
 const busyButtons=new WeakMap();
 function eyeIcon(visible=false){return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${visible?'<path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.2A11.1 11.1 0 0 1 12 5c5.5 0 9 7 9 7a16.6 16.6 0 0 1-3 3.9M6.4 6.4A17.7 17.7 0 0 0 3 12s3.5 7 9 7a10.3 10.3 0 0 0 5.6-1.8"/>':'<path d="M3 12s3.5-7 9-7 9 7 9 7-3.5 7-9 7-9-7-9-7Z"/><circle cx="12" cy="12" r="3"/>'}</svg>`;}
@@ -29,7 +29,7 @@ function uiIcon(name){
   return '<svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'+(shapes[name]||'')+'</svg>';
 }
 function helpControl(label='Ayuda de esta pantalla'){return '<button type="button" class="help-button utility-button" data-action="help" aria-label="'+esc(label)+'" title="'+esc(label)+'"><span class="help-symbol" aria-hidden="true">?</span><span>Ayuda</span></button>';}
-const dialogActionLabels={'Guardar antes de salir':'Guardar y continuar','Descartar edición':'Descartar cambios','Nueva matrícula':'Crear borrador','Cambiar curso':'Guardar cambio de curso','Registrar retiro':'Registrar retiro','Registrar reingreso':'Registrar reingreso','Preparar matrícula de otro año':'Crear borrador anual','Actualizar plantilla de esta ficha':'Actualizar plantilla','Agregar curso':'Crear curso','Consultar otro año':'Consultar año','Nueva cuenta':'Crear cuenta','Configurar cuenta':'Guardar cambios','Cambiar contraseña':'Cambiar contraseña','Añadir pregunta':'Añadir al borrador','Editar pregunta':'Guardar pregunta','Exportar nómina':'Descargar','Descargas de la ficha':'Descargar','Recargar ficha guardada':'Recargar ficha'};
+const dialogActionLabels={'Guardar antes de salir':'Guardar y continuar','Descartar edición':'Descartar cambios','Nueva matrícula':'Crear borrador','Cambiar curso':'Guardar cambio de curso','Registrar retiro':'Registrar retiro','Registrar reingreso':'Registrar reingreso','Preparar matrícula de otro año':'Crear borrador anual','Actualizar plantilla de esta ficha':'Actualizar plantilla','Agregar curso':'Crear curso','Consultar otro año':'Consultar año','Nueva cuenta':'Crear cuenta','Configurar cuenta':'Guardar cambios','Cambiar contraseña':'Cambiar contraseña','Añadir pregunta':'Añadir al borrador','Editar pregunta':'Guardar pregunta','Exportar nómina':'Descargar','Descargas de la ficha':'Descargar','Recargar ficha guardada':'Recargar ficha','Guardar las filas válidas':'Guardar como borradores'};
 function dialog(title,html,onSubmit){
   const d=$('#dialog'),trigger=document.activeElement,readOnly=/^Revisión \d+$/.test(title);
   d.dataset.helpTopic=enrollmentDialogHelpTopic(title);
@@ -111,7 +111,7 @@ let yearChangeRequest=0;
 function applySchoolYear(year){
   state.year=year;state.course='';state.status='';state.q='';state.recordFilters={};state.page=1;state.auditSnapshot=null;state.record=null;state.draft={};state.editing=false;state.dirty=false;state.conflict=false;
   invalidateRecordsCache();collectionPages.clear();invalidateImport();resetImportPreview();
-  Object.assign(state,{importRows:null,importTicket:null,importPreview:null,importKind:null,importOptions:null,importIpeReviewValid:false});
+  Object.assign(state,{importRows:null,importTicket:null,importPartialTicket:null,importPreview:null,importKind:null,importOptions:null,importIpeReviewValid:false});
   if(typeof resetReportsContext==='function')resetReportsContext();
   if(typeof resetCollectionViews==='function')resetCollectionViews({yearOnly:true});
   if(typeof resetTemplateViews==='function')resetTemplateViews();
@@ -283,7 +283,7 @@ function clearSessionViewData(){
   invalidateRecordsCache();collectionPages.clear();listRequest++;
   if(typeof resetReportsContext==='function')resetReportsContext();
   if(typeof resetImportPreview==='function')resetImportPreview();
-  Object.assign(state,{importRows:null,importTicket:null,importPreview:null,importKind:null,importOptions:null,importIpeReviewValid:false});
+  Object.assign(state,{importRows:null,importTicket:null,importPartialTicket:null,importPreview:null,importKind:null,importOptions:null,importIpeReviewValid:false});
 }
 function paintCollection(container,id,items,row,{label='registros',pageSize=10,empty='No hay registros.',before='',after=''}={}){
   if(!container)return;
@@ -423,21 +423,22 @@ function importReady(){const p=state.importPreview;if(!state.importTicket||!p?.t
 function refreshImportCommit(){const button=$('[data-action="commit-import"]'),preview=state.importPreview;if(!button||button.getAttribute('aria-busy')==='true')return;button.disabled=!importReady();if(state.importKind==='school'&&preview?.summary)button.textContent=(preview.errors||[]).some(error=>error.code!=='CURSO_NO_RESUELTO')?'Resuelve las observaciones para guardar':`Guardar en ${preview.year}: ${(preview.summary.new||0)+selectedImportAnnual().length} nuevas y ${selectedImportUpdates().length} cambios`;}
 function newImportOptions(){return {columnMapping:Object.create(null),sheetMappings:Object.create(null),contactOwner:'unassigned',addressOwner:'unassigned',confirmedIpeRows:[]};}
 function invalidateImport({identityChanged=false,message='Cambió la configuración. Vuelve a previsualizar para revisar el resultado.'}={}){
-  state.importRevision++;state.importTicket=null;
+  state.importRevision++;state.importTicket=null;state.importPartialTicket=null;
   if(identityChanged){if(state.importOptions){state.importOptions.confirmedIpeRows=[];delete state.importOptions.ipeConfirmationToken;}state.importIpeReviewValid=false;}
   const button=$('[data-action="commit-import"]');if(button)button.disabled=true;
+  const partialButton=$('[data-action="commit-partial-import"]');if(partialButton)partialButton.disabled=true;
   const hint=$('#import-stale');if(hint)hint.textContent=message;
 }
 function renderImport(){
-  state.importRows=null;state.importTicket=null;state.importPreview=null;state.importKind=null;state.importOptions=newImportOptions();state.importIpeReviewValid=false;state.importRevision++;
+  state.importRows=null;state.importTicket=null;state.importPartialTicket=null;state.importPreview=null;state.importKind=null;state.importOptions=newImportOptions();state.importIpeReviewValid=false;state.importRevision++;
   $('#content').innerHTML=heading('Importación de estudiantes','Revisa el archivo, ajusta sus columnas y confirma los cursos antes de guardar.')+`<section class="panel">${state.meta.testEnvironment?'<div class="callout">Entorno de pruebas: usa estudiantes ficticios.</div>':''}<p class="help">Acepta Excel <strong>.xlsx</strong> del ERP (hoja Usuarios), padrones administrativos y libros con <strong>una hoja por curso</strong>. Puedes ajustar columnas y asignar cursos desde la previsualización. Hasta 500 estudiantes por carga y 2 MB por archivo. Las columnas de acceso se descartan.</p><form id="import-form"><div class="fields narrow"><label>Año de matrícula<input name="year" type="number" min="${schoolYearRange().min}" max="${schoolYearRange().max}" value="${state.year}" required></label><label>Planilla de estudiantes<input name="file" type="file" accept=".xlsx,.json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/json" required></label></div><p class="hint spaced">El año indicado en la planilla se detecta antes de guardar. Si no lo indica, se usará el año del formulario. Los libros que mezclan años se revisan por separado. Si tienes un archivo .xls, guárdalo como .xlsx. Excel permite revisar cambios de contacto en fichas existentes. JSON solo agrega fichas nuevas. La planilla no cambia identificaciones ni cursos, ni crea cuentas.</p><div id="import-config"></div><button class="primary">Previsualizar carga</button><p id="import-stale" class="hint spaced" role="status"></p><div id="import-error" class="error-text" role="alert"></div></form><div id="import-preview" aria-live="polite"></div></section>`;
   const form=$('#import-form');form.elements.year.oninput=()=>{invalidateImport({identityChanged:true});if(state.importPreview&&!$('#import-preview')?.hasAttribute('aria-busy'))renderImportPreview();};form.elements.file.onchange=()=>{invalidateImport({identityChanged:true});state.importOptions=newImportOptions();$('#import-config').innerHTML='';$('#import-preview').innerHTML='';state.importPreview=null;};
   form.onsubmit=async e=>{
     e.preventDefault();const button=e.submitter,container=$('#import-preview'),errorLabel=$('#import-error'),requestRevision=state.importRevision;
     if(button?.disabled||container.getAttribute('aria-busy')==='true')return;
-    const previous=state.importPreview,reviewFromPreview=Boolean(previous)&&document.activeElement?.hasAttribute('data-import-ipe-refresh');
+    const previous=state.importPreview,reviewFromPreview=Boolean(previous)&&(document.activeElement?.hasAttribute('data-import-ipe-refresh')||document.activeElement?.hasAttribute('data-import-partial-refresh'));
     const options=structuredClone(state.importOptions);
-    setBusy(button,true,'Revisando planilla…');errorLabel.textContent='';$('#import-stale').textContent='';showLoading(container,'Revisando estudiantes y cursos…','import');state.importRows=null;state.importTicket=null;state.importIpeReviewValid=false;
+    setBusy(button,true,'Revisando planilla…');errorLabel.textContent='';$('#import-stale').textContent='';showLoading(container,'Revisando estudiantes y cursos…','import');state.importRows=null;state.importTicket=null;state.importPartialTicket=null;state.importIpeReviewValid=false;
     try{
       const fd=new FormData(e.target),file=fd.get('file');if(file.size>2*1024*1024)throw new Error('Use un archivo de hasta 2 MB.');
       const school=/\.xlsx$/i.test(file.name);if(!school&&!/\.json$/i.test(file.name))throw new Error('Elija una planilla .xlsx o un padrón .json.');
@@ -448,6 +449,7 @@ function renderImport(){
       const preview=await api(school?'/api/import/school/preview':'/api/import/preview',{method:'POST',body});
       if(container!==$('#import-preview')||requestRevision!==state.importRevision)return;
       state.importKind=school?'school':'json';state.importRows=school?preview.rows:body.rows;state.importTicket=preview.ticket;state.importPreview=preview;
+      state.importPartialTicket=school?(preview.partialImport?.ticket||null):null;
       state.importIpeReviewValid=school&&Array.isArray(preview.confirmedIpeRows)&&typeof preview.ipeConfirmationToken==='string'&&Boolean(preview.ipeConfirmationToken);
       if(school){
         state.importOptions.confirmedIpeRows=state.importIpeReviewValid?preview.confirmedIpeRows.map(({sheet,row})=>({sheet,row})):[];
@@ -462,6 +464,31 @@ function renderImport(){
       setBusy(button,false);
     }
   };
+}
+function openPartialImport(){
+  const selection=partialImportSelection();
+  if(!selection)throw new Error('Vuelve a previsualizar el archivo antes de guardar las filas válidas.');
+  const preview=state.importPreview,container=$('#import-preview'),revision=state.importRevision,owner=state.user?.id;
+  const active=()=>state.importPreview===preview&&container===$('#import-preview')&&revision===state.importRevision&&owner===state.user?.id;
+  const count=selection.rows.length;
+  let saved=false;
+  dialog('Guardar las filas válidas',`<p>Se guardará${count===1?'':'n'} <strong>${count} ${count===1?'borrador nuevo':'borradores nuevos'}</strong> en el año <strong>${selection.year}</strong>. ${partialImportPending(selection.pendingCount)}</p><p>Esta acción no modifica expedientes existentes ni crea cursos.</p>`,async()=>{
+    if(!active()||partialImportSelection()?.ticket!==selection.ticket)throw new Error('La revisión cambió. Vuelve a previsualizar el archivo.');
+    let result;
+    try{result=await api('/api/import/school/commit',{method:'POST',body:{partial:true,rows:selection.rows,ticket:selection.ticket,year:selection.year,coursesToCreate:[]}});}
+    catch(error){
+      if(error.status===409&&active()){invalidateImport({message:'La revisión ya no está vigente. Vuelve a previsualizar el archivo.'});renderImportPreview();}
+      throw error;
+    }
+    if(!active())return;
+    const created=result.created??result.count;
+    invalidateImport({message:'Vuelve a previsualizar el archivo antes de hacer otra carga.'});
+    importPreviewWorkspace().partialSaved={created:Number.isInteger(created)?created:count,year:selection.year,pendingCount:selection.pendingCount};
+    saved=true;
+    renderImportPreview();
+  });
+  const panel=$('#dialog'),restoreFocus=panel.onclose;
+  panel.onclose=()=>{if(saved&&state.importPreview===preview)$('#import-partial-title')?.focus({preventScroll:true});else restoreFocus?.();};
 }
 function renderImportConfiguration(){
   const p=state.importPreview,container=$('#import-config');if(state.importKind!=='school'||!p.sheetSummaries?.length){container.innerHTML='';return;}
@@ -509,11 +536,12 @@ document.addEventListener('click',async e=>{const b=e.target.closest('[data-acti
   else if(a==='reenter')openReentry();
   else if(a==='export-course')await download('/api/export?'+new URLSearchParams(recordsFilterQuery()),{},`curso-${state.year}.csv`);
   else if(a==='create-import-courses'){
-    if(state.importKind!=='school'||!state.importPreview?.courseTicket||!Array.isArray(state.importPreview.coursesToCreate))throw new Error('Vuelve a previsualizar la planilla antes de crear los cursos.');
+    if(state.importKind!=='school'||!state.importPreview?.courseTicket||!Array.isArray(state.importPreview.coursesToCreate)||importPreviewWorkspace().partialSaved)throw new Error('Vuelve a previsualizar la planilla antes de crear los cursos.');
     const container=$('#content');
     const result=await api('/api/import/school/create-courses',{method:'POST',body:{year:state.importPreview.year,coursesToCreate:state.importPreview.coursesToCreate,courseTicket:state.importPreview.courseTicket}});
-    if(container===$('#content')){notice(result.created?`${result.created} cursos creados. Vuelve a revisar la planilla.`:'Los cursos ya existían. Vuelve a revisar la planilla.');const form=$('#import-form');form?.requestSubmit(form.querySelector('button.primary')||undefined);}
+    if(container===$('#content')){notice(result.created?`${result.created} ${result.created===1?'curso creado':'cursos creados'}. Vuelve a revisar la planilla.`:'Los cursos ya existían. Vuelve a revisar la planilla.');const form=$('#import-form');form?.requestSubmit(form.querySelector('button.primary')||undefined);}
   }
+  else if(a==='commit-partial-import')openPartialImport();
   else if(a==='commit-import'){
     if(!importReady())throw new Error('Revisa la planilla y selecciona qué cambios aplicar antes de importar.');
     const container=$('#content'),school=state.importKind==='school';

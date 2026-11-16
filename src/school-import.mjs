@@ -248,7 +248,7 @@ function accountWarnings(row, rowNumber) {
 }
 
 /** Normalize one ERP row into the field names used by PuraMatrícula. */
-export function normalizeStudentRow(row, { rowNumber = 2, sheet = 'Usuarios', origin = 'ERP_USUARIOS' } = {}) {
+export function normalizeStudentRow(row, { rowNumber = 2, sheet = 'Usuarios', origin = 'ERP_USUARIOS', trackRejectedIdentity = false } = {}) {
   const warnings = accountWarnings(row, rowNumber);
   const role = firstValue(row, ['Rol', 'rol', 'role']);
   if (role && !STUDENT_ROLES.has(normalizeRole(role))) {
@@ -274,7 +274,7 @@ export function normalizeStudentRow(row, { rowNumber = 2, sheet = 'Usuarios', or
   const guardian = guardianRaw ? normalizeRutAndDv(guardianRaw) : { rut: '', dv: '' };
   const guardianIdentifier = guardian.rut ? `${guardian.rut}${guardian.dv ? `-${guardian.dv}` : ''}` : guardianRaw || '';
   if (guardianRaw && guardian.dv && !validateRut(guardian.rut, guardian.dv)) warnings.push(rowIssue(rowNumber, 'RUT_APODERADO_INVALIDO', 'El RUT del apoderado requiere revisión.'));
-  if (errors.length) return { row: null, errors, warnings };
+  if (errors.length) return { row: null, errors, warnings, ...(trackRejectedIdentity ? { rejectedIdentity: { value: identity.document, raw: identity.rawRut, sourceId: identity.erpId, rut: identity.rut } } : {}) };
   const originId = identity.erpId || identity.key;
   return {
     row: {
@@ -430,7 +430,7 @@ export function normalizeAdministrativeRows(rows, { sheet = 'Estudiantes' } = {}
   return inspectSheet(rows).entries.map(({ row, rowNumber }) => normalizeAdministrativeRow(row, { rowNumber, sheet }));
 }
 
-function normalizeCourseRosterRow(raw, { mapping, rowNumber, sheet, year, courseName, courseId, contactOwner, addressOwner, confirmIpe }) {
+function normalizeCourseRosterRow(raw, { mapping, rowNumber, sheet, year, courseName, courseId, contactOwner, addressOwner, confirmIpe, trackRejectedIdentity }) {
   const role = firstValue(raw, ['Rol', 'role']);
   if (role && !STUDENT_ROLES.has(normalizeRole(role))) return { row: null, ignored: rowIssue(rowNumber, 'ROL_IGNORADO', 'La fila no corresponde a un estudiante; se omitió.', { sheet, role }) };
   const get = key => mappedValue(raw, mapping, key);
@@ -463,7 +463,7 @@ function normalizeCourseRosterRow(raw, { mapping, rowNumber, sheet, year, course
   if (guardianRaw && !validateRut(guardian.rut, guardian.dv)) warnings.push(issue('RUT_APODERADO_INVALIDO', 'El identificador del apoderado requiere revisión.'));
   const birthRaw = get('birthDate'), birthDate = normalizeDate(birthRaw);
   if (birthRaw && !birthDate) errors.push(issue('FECHA_INVALIDA', 'La fecha de nacimiento requiere revisión.'));
-  if (errors.length) return { row: null, errors, warnings, ipeConfirmed };
+  if (errors.length) return { row: null, errors, warnings, ipeConfirmed, ...(trackRejectedIdentity ? { rejectedIdentity: { value: identifier, raw: identifierRaw, rut: validRun ? rut.rut : null } } : {}) };
   const guardianNames = get('guardianNames'), guardianSurname = get('guardianSurname'), guardianSecondSurname = get('guardianSecondSurname');
   const contactPhone = get('contactPhone'), contactEmail = get('contactEmail'), address = get('address'), commune = get('commune');
   const data = {
@@ -532,7 +532,7 @@ function selectedIpeLocations(input) {
   return locations;
 }
 
-export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', year = null, courses = null, maxRows = 5000, columnMapping = {}, sheetMappings = {}, contactOwner = 'unassigned', addressOwner = 'unassigned', confirmedIpeRows = [] } = {}) {
+export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', year = null, courses = null, maxRows = 5000, columnMapping = {}, sheetMappings = {}, contactOwner = 'unassigned', addressOwner = 'unassigned', confirmedIpeRows = [], onIdentity } = {}) {
   const sheets = getSheets(workbook);
   const selectedYear = parseSchoolYear(year), sourceYearValues = new Set();
   let hasSourceYear = false, invalidSourceYear = false;
@@ -541,6 +541,7 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
   const ignored = [];
   const rows = [];
   const selectedIpe = selectedIpeLocations(confirmedIpeRows);
+  const trackRejectedIdentity = typeof onIdentity === 'function';
   const appliedIpe = [];
   const administrativeRows = [];
   const seen = new Map();
@@ -633,9 +634,9 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
     for (const { row: raw, rowNumber } of info.entries) {
       let normalized;
       const ipeLocation = selectedIpe?.size && selectedIpe.get(importRowLocation(sheet, rowNumber));
-      if (kind === 'por_curso') normalized = normalizeCourseRosterRow(raw, { mapping, rowNumber, sheet, year, courseName: config.courseName, courseId: config.courseId, contactOwner, addressOwner, confirmIpe: Boolean(ipeLocation) });
+      if (kind === 'por_curso') normalized = normalizeCourseRosterRow(raw, { mapping, rowNumber, sheet, year, courseName: config.courseName, courseId: config.courseId, contactOwner, addressOwner, confirmIpe: Boolean(ipeLocation), trackRejectedIdentity });
       else if (kind === 'usuarios') {
-        normalized = normalizeStudentRow(applyErpMapping(raw, mapping, { ...(isMapping(columnMapping) ? columnMapping : {}), ...(config.columnMapping || {}) }), { rowNumber, sheet, origin });
+        normalized = normalizeStudentRow(applyErpMapping(raw, mapping, { ...(isMapping(columnMapping) ? columnMapping : {}), ...(config.columnMapping || {}) }), { rowNumber, sheet, origin, trackRejectedIdentity });
         if(normalized.row){
           const data=normalized.row.data,get=key=>mappedValue(raw,mapping,key),guardianNames=get('guardianNames'),guardianSurname=get('guardianSurname'),guardianSecondSurname=get('guardianSecondSurname');
           Object.assign(data,{sourceSheet:sheet,sourceRow:String(rowNumber),sourceGuardianNames:guardianNames,sourceGuardianSurname:guardianSurname,sourceGuardianSecondSurname:guardianSecondSurname,sourceContactPhone:get('contactPhone'),sourceContactEmail:get('contactEmail'),sourceAddress:get('address'),sourceCommune:get('commune')});
@@ -662,6 +663,9 @@ export function normalizeSchoolWorkbook(workbook, { origin = 'ERP_USUARIOS', yea
       summary.studentRows++;
       intendedRows++;
       if (intendedRows > maxRows) continue;
+      // Inspect identities before dropping invalid or duplicate rows. The private
+      // callback never adds those identifiers to the preview diagnostics.
+      if (trackRejectedIdentity) onIdentity(sheet, rowNumber, normalized.row?.identity || normalized.rejectedIdentity);
       if (normalized.ipeConfirmed) appliedIpe.push(ipeLocation);
       if (normalized.errors?.length) { errors.push(...normalized.errors.map(withSheet)); continue; }
       if (normalized.row) addRow(normalized.row);

@@ -7,6 +7,16 @@ import { parseSchoolYear } from './school-years.mjs';
 const MAX_ROWS = 500;
 const SOURCE = 'ERP_USUARIOS';
 const UPDATE_FIELDS = Object.freeze(['studentPhone', 'email', 'address', 'commune', 'guardianPhone', 'guardianEmail', 'guardianAddress', 'guardianCommune']);
+// Only known student-row problems can be set aside. Sheet-level diagnostics
+// may also carry a row number (for example a bad header or year declaration).
+const PARTIAL_ROW_ISSUES = new Set([
+  'NOMBRES_AUSENTES', 'APELLIDO_AUSENTE', 'IDENTIDAD_AUSENTE', 'RUT_INVALIDO',
+  'IDENTIFICADOR_LARGO', 'FECHA_INVALIDA', 'DUPLICADO_IDENTIDAD',
+  'IDENTITY_FIELD_REQUIRED', 'IDENTIFIER_TYPE_INVALID', 'IDENTIFIER_REQUIRED',
+  'RUN_INVALID', 'DATE_INVALID', 'FIELD_TYPE_INVALID',
+  'CURSO_NO_RESUELTO', 'CURSO_AUSENTE', 'CURSO_AMBIGUO', 'COURSE_MAPPING_INVALID', 'COURSE_PERMISSION_DENIED'
+]);
+const locationKey = (sheet, row) => JSON.stringify([sheet, row]);
 
 export class SchoolImportError extends Error {
   constructor(message, code = 'SCHOOL_IMPORT_INVALID', status = 400) {
@@ -105,8 +115,54 @@ function stableRows(rows) {
   }));
 }
 
-function ticketPayload(actor, templateId, year, rows, coursesToCreate) {
-  return JSON.stringify({ purpose: 'school-roster-review-v2', actor, templateId, year: Number(year), rows: stableRows(rows), coursesToCreate: coursesToCreate.map(course => ({ name: course.name, year: Number(course.year) })) });
+function ticketPayload(actor, templateId, year, rows, coursesToCreate, partial = false) {
+  return JSON.stringify({ purpose: partial ? 'school-roster-partial-v1' : 'school-roster-review-v2', actor, templateId, year: Number(year), rows: stableRows(rows), coursesToCreate: coursesToCreate.map(course => ({ name: course.name, year: Number(course.year) })) });
+}
+
+function observeIdentity(locations, sheet, row, identity) {
+  if (!identity) return;
+  const place = locationKey(sheet, row);
+  const add = key => {
+    const places = locations.get(key) || new Set();
+    places.add(place); locations.set(key, places);
+  };
+  if (identity.sourceId) add('erp:' + asText(identity.sourceId));
+  if (identity.rut) add('run-body:' + asText(identity.rut));
+  for (const input of [identity.value, identity.raw]) {
+    const value = asText(input).normalize('NFKC').toUpperCase().replace(/[.\s]/g, '');
+    if (!value) continue;
+    const document = normalizeIdentifier(value);
+    if (document) add('document:' + document);
+    // A similar RUN with an invalid/missing check digit may be the same
+    // person. Hold both rows instead of accepting one on a guess.
+    if (identity.rut || identity.raw || identity.type === 'RUN_CHILE') {
+      const full = /^(\d{7,8})-?[0-9K]$/.exec(value);
+      if (full) add('run-body:' + full[1]);
+      if (!identity.rut && /^\d{7,8}$/.test(value)) add('run-body:' + value);
+    }
+  }
+}
+
+function partialReview(store, svc, user, templateId, year, yearContext, rows, errors, identityLocations) {
+  if (!errors.some(error => error.code !== 'CURSO_NO_RESUELTO') || yearContext.conflict ||
+      errors.some(error => !PARTIAL_ROW_ISSUES.has(error.code) || !error.sheet || !Number.isInteger(error.row) || error.row < 1)) return null;
+  const pending = new Set();
+  for (const issue of errors) {
+    pending.add(locationKey(issue.sheet, issue.row));
+    if (issue.firstSheet && Number.isInteger(issue.firstRow)) pending.add(locationKey(issue.firstSheet, issue.firstRow));
+  }
+  for (const places of identityLocations.values()) {
+    if (places.size > 1) for (const place of places) pending.add(place);
+  }
+  const indexes = [];
+  rows.forEach((row, index) => {
+    const place = locationKey(row.sourceSheet, row.rowNumber);
+    if (!pending.has(place) && row.review.kind === 'new' && row.courseId && can(svc, user, 'write', row.courseId)) indexes.push(index);
+    else if (row.review.kind !== 'match') pending.add(place);
+  });
+  if (!indexes.length) return null;
+  const payload = ticketPayload(user.id, templateId, year, indexes.map(index => rows[index]), [], true);
+  return { ticket: store?.mac ? store.mac(payload) : payload, indexes, pendingCount: pending.size };
 }
 
 function courseTicketPayload(actor, year, coursesToCreate) {
@@ -346,8 +402,10 @@ export function createSchoolImport(store, svc) {
     const workbook = await decodeWorkbook(input);
     const token = ipeConfirmationToken(store, user.id, selectedYear, workbook, input);
     const staleIpeConfirmation = Array.isArray(input.confirmedIpeRows) && input.confirmedIpeRows.length > 0 && !validIpeConfirmationToken(token, input.ipeConfirmationToken);
+    const identityLocations = new Map();
     const parserOptions={year:selectedYear,maxRows:MAX_ROWS,fileName:input.name||input.fileName||'',columnMapping:input.columnMapping,sheetMappings:input.sheetMappings,contactOwner:input.contactOwner,addressOwner:input.addressOwner,
-      confirmedIpeRows:staleIpeConfirmation ? [] : input.confirmedIpeRows};
+      confirmedIpeRows:staleIpeConfirmation ? [] : input.confirmedIpeRows,
+      onIdentity: (sheet, row, identity) => observeIdentity(identityLocations, sheet, row, identity)};
     const parsed = Buffer.isBuffer(workbook) || workbook instanceof Uint8Array || typeof workbook === 'string'
       ? await parseSchoolWorkbook(workbook, parserOptions).catch(error=>{throw new SchoolImportError(error.message,error.code||'XLSX_INVALID');})
       : normalizeSchoolWorkbook(workbook, parserOptions);
@@ -403,7 +461,8 @@ export function createSchoolImport(store, svc) {
       administrativeRows: parsed.administrativeRows || [], coursesToCreate, courseTicket,
       unresolvedCourses: coursesToCreate, errors, warnings, ignored: parsed.ignored || [],
       summary: { ...summarizeSchoolImport({ rows, errors, warnings, detectedRows: parsed.summary.detectedRows, unresolvedCourses: coursesToCreate.length }), ...counts },
-      ticket, canImport: actionable > 0 && errors.length === 0
+      ticket, canImport: actionable > 0 && errors.length === 0,
+      partialImport: partialReview(store, svc, user, templateInfo?.id, year, yearContext, rows, errors, identityLocations)
     };
   };
 
@@ -450,6 +509,9 @@ export function createSchoolImport(store, svc) {
     if (!Array.isArray(updateIndexes) || updateIndexes.length > MAX_ROWS || new Set(updateIndexes).size !== updateIndexes.length || updateIndexes.some(index => !Number.isInteger(index) || input.rows[index]?.review.kind !== 'update')) throw new SchoolImportError('Seleccione solamente filas con cambios previsualizados.', 'IMPORT_SELECTION_INVALID');
     const annualIndexes=input.annualIndexes??[];
     if(!Array.isArray(annualIndexes)||annualIndexes.length>MAX_ROWS||new Set(annualIndexes).size!==annualIndexes.length||annualIndexes.some(index=>!Number.isInteger(index)||input.rows[index]?.review.kind!=='annual'))throw new SchoolImportError('Seleccione solamente matrículas anuales previsualizadas.','IMPORT_SELECTION_INVALID');
+    const partial = input.partial === true;
+    if (partial && (input.createCourses === true || coursesToCreate.length || updateIndexes.length || annualIndexes.length ||
+        input.rows.some(row => row.review.kind !== 'new' || !row.courseId))) throw new SchoolImportError('El guardado parcial admite solo fichas nuevas con un curso ya asignado.', 'PARTIAL_IMPORT_INVALID');
     const selected = new Set([...updateIndexes,...annualIndexes]);
     const activeRows = input.rows.filter((row, index) => row.review.kind === 'new' || selected.has(index));
     const stale = () => new SchoolImportError('Las fichas o su disponibilidad cambiaron desde la revisión. Vuelva a previsualizar antes de confirmar.', 'IMPORT_REVIEW_STALE', 409);
@@ -457,7 +519,7 @@ export function createSchoolImport(store, svc) {
       const templateInfo = await loadTemplateFields(store);
       if (templateInfo?.error) throw new SchoolImportError(templateInfo.error.message, templateInfo.error.code);
       const templateFields = templateInfo?.fields || [];
-      const payload = ticketPayload(user.id, templateInfo?.id, year, input.rows, coursesToCreate);
+      const payload = ticketPayload(user.id, templateInfo?.id, year, input.rows, coursesToCreate, partial);
       const expectedTicket = store?.mac ? store.mac(payload) : payload;
       if (!input.ticket || input.ticket !== expectedTicket) throw new SchoolImportError('La previsualización caducó o fue modificada; vuelva a previsualizar.', 'IMPORT_TICKET_MISMATCH', 409);
       if (!activeRows.length) throw new SchoolImportError('No hay fichas nuevas, matrículas anuales ni actualizaciones seleccionadas.', 'IMPORT_SELECTION_EMPTY', 409);
@@ -547,10 +609,10 @@ export function createSchoolImport(store, svc) {
       const origins = unique(activeRows.map(row => row.origin || SOURCE));
       const source = origins.length === 1 ? origins[0] : 'PADRON_MIXTO';
       const detail = { count: inserted.length + updated.length, created: inserted.length, annual: annual.length, createdStudents: inserted.length-annual.length, updated: updated.length, skipped: input.rows.length - activeRows.length };
-      await auditInTransaction(store, user.id, 'import.commit.erp', '', { ...detail, year, source, createdCourses: createdCourses.length });
+      await auditInTransaction(store, user.id, 'import.commit.erp', '', { ...detail, year, source, createdCourses: createdCourses.length, ...(partial ? { partial: true } : {}) });
       return { ...detail, ids: [...inserted, ...updated], source };
     });
-    return { ...result, year };
+    return { ...result, year, ...(partial ? { partial: true } : {}) };
   };
   return { preview, commit, createCourses };
 }

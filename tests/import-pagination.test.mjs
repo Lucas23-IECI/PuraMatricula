@@ -12,19 +12,28 @@ function syntheticPreview(count=70){
     warnings:Array.from({length:35},(_,index)=>({sheet:'Planilla ficticia',row:index+2,message:'Advertencia sintética '+index})),
     coursesToCreate:Array.from({length:28},(_,index)=>({name:'Curso ficticio '+index})),courses:[{id:'curso-sintetico',name:'Curso de prueba'}]};
 }
-function fixture({data=syntheticPreview(),preferences=new Map()}={}){
-  const state={user:{id:'persona-sintetica',allCourses:true},importKind:'school',importPreview:data,importTicket:'revision-sintetica',
+function fixture({data=syntheticPreview(),preferences=new Map(),postCommit=null}={}){
+  const state={user:{id:'persona-sintetica',allCourses:true},importKind:'school',importPreview:data,importTicket:'revision-sintetica',importRevision:0,
+    ...(data.partialImport?{importPartialTicket:data.partialImport.ticket,importRows:data.rows}:{}),
     importOptions:{confirmedIpeRows:structuredClone(data.confirmedIpeRows||[]),ipeConfirmationToken:data.ipeConfirmationToken},importIpeReviewValid:Boolean(data.ipeConfirmationToken)};
   const callbacks=new Map(),details={open:false,ontoggle:null};let refreshes=0;
   const preview={innerHTML:'',onchange:null,querySelector:selector=>selector==='[data-import-warnings]'?details:null};
+  const panel={onclose:null},calls=[];
+  let submitPartial,dialogText='',focusCount=0;
   const viewKey=(user,section)=>JSON.stringify([user,section]);
   const views={get:(user,section,modes,fallback)=>modes.includes(preferences.get(viewKey(user,section)))?preferences.get(viewKey(user,section)):fallback,
     set:(user,section,mode)=>preferences.set(viewKey(user,section),mode),html:({id,value})=>`<div data-view-control="${id}" data-current-mode="${value}"></div>`,bind:(_root,id,onChange)=>callbacks.set('view:'+id,onChange),chips:()=>'',bindChips:(_root,id,onChange)=>callbacks.set('chips:'+id,onChange)};
   const context=createContext({window:{EnrollmentViews:views},EnrollmentViews:views,state,esc:escape,can:()=>true,courseName:()=> 'Curso ficticio',
-    $:selector=>selector==='#import-preview'?preview:null,refreshImportCommit:()=>refreshes++,invalidateImport:()=>{state.importTicket=null;}});
+    EnrollmentImportObservations:{hasDiagnostics:p=>Boolean(p.errors?.length||p.warnings?.length)},
+    $:selector=>selector==='#import-preview'?preview:selector==='#dialog'?panel:selector==='#import-partial-title'?{focus:()=>focusCount++}:null,
+    refreshImportCommit:()=>refreshes++,invalidateImport:()=>{state.importRevision++;state.importTicket=null;state.importPartialTicket=null;},
+    dialog:(title,html,callback)=>{dialogText=title+html;submitPartial=callback;panel.onclose=()=>{};},
+    api:async(path,options)=>{calls.push({path,options});return postCommit?postCommit():{created:options.body.rows.length,partial:true};}});
   runInContext(read('pagination.js'),context);
   context.EnrollmentPagination={...context.window.EnrollmentPagination,bind:(_root,id,onChange)=>callbacks.set(id,onChange)};
   runInContext(read('import-preview.js')+'\nglobalThis.ui={renderImportPreview,selectedImportUpdates,selectedImportAnnual,importPreviewWorkspace};',context);
+  const app=read('app.js');
+  runInContext(app.slice(app.indexOf('function openPartialImport(){'),app.indexOf('function renderImportConfiguration(){'))+'\nglobalThis.ui.openPartialImport=openPartialImport;',context);
   const render=()=>context.ui.renderImportPreview();
   const page=(id,number,pageSize=id==='import-rows'?25:10)=>callbacks.get(id)({page:number,pageSize});
   const check=(index,checked=true)=>preview.onchange({target:{id:'',dataset:{importUpdate:String(index)},checked}});
@@ -37,8 +46,68 @@ function fixture({data=syntheticPreview(),preferences=new Map()}={}){
   const clearFilters=()=>callbacks.get('chips:import-preview-filters')({clear:true});
   const workspace=()=>context.ui.importPreviewWorkspace();
   const visibleRows=()=>[...preview.innerHTML.matchAll(/data-import-row="(\d+)"/g)].map(match=>Number(match[1]));
-  render();return {state,context,preview,details,page,check,selected,visible,visibleRows,render,filter,listFilter,mode,removeFilter,clearFilters,workspace,preferences,getRefreshes:()=>refreshes};
+  render();return {state,context,preview,details,page,check,selected,visible,visibleRows,render,filter,listFilter,mode,removeFilter,clearFilters,workspace,preferences,calls,getRefreshes:()=>refreshes,
+    openPartial:()=>{context.ui.openPartialImport();return dialogText;},confirmPartial:async()=>{await submitPartial();panel.onclose();},getFocusCount:()=>focusCount};
 }
+
+function partialPreview(){
+  const preview=syntheticPreview(4);
+  preview.ticket=null;
+  for(const index of [0,2])preview.rows[index].review={kind:'new'};
+  preview.errors=[{sheet:'Planilla ficticia',row:6,code:'RUT_INVALIDO',message:'RUN ficticio inválido'}];
+  preview.partialImport={ticket:'ticket-parcial',indexes:[0,2],pendingCount:3};
+  return preview;
+}
+
+test('guardado parcial pide confirmación para las filas firmadas aunque el filtro las oculte y conserva las observaciones',async()=>{
+  const p=partialPreview();
+  const f=fixture({data:p});
+  f.filter('q','FICTICIO-3');
+  assert.deepEqual(f.visibleRows(),[3]);
+  assert.match(f.preview.innerHTML,/Guardar 2 filas válidas/);
+  assert.match(f.preview.innerHTML,/3 filas seguirán pendientes/);
+  assert.match(f.preview.innerHTML,/advertencias no bloquean el guardado/);
+  assert.match(f.openPartial(),/2 borradores nuevos[\s\S]*2026[\s\S]*3 filas seguirán pendientes/);
+  assert.equal(f.calls.length,0,'Abrir o cancelar la confirmación no guarda.');
+  await f.confirmPartial();
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls)),[{path:'/api/import/school/commit',options:{method:'POST',body:{partial:true,rows:[p.rows[0],p.rows[2]],ticket:'ticket-parcial',year:2026,coursesToCreate:[]}}}]);
+  assert.match(f.preview.innerHTML,/2 borradores guardados en 2026/);
+  assert.match(f.preview.innerHTML,/3 filas seguirán pendientes/);
+  assert.match(f.preview.innerHTML,/RUN ficticio inválido/);
+  assert.match(f.preview.innerHTML,/Descargar observaciones/);
+  assert.match(f.preview.innerHTML,/data-import-partial-refresh/);
+  assert.doesNotMatch(f.preview.innerHTML,/data-action="commit-partial-import"/);
+  assert.equal(f.getFocusCount(),1);
+});
+
+test('guardado parcial rechaza previsualización vencida, otra cuenta y contrato inválido sin enviar filas',async()=>{
+  const f=fixture({data:partialPreview()});
+  f.openPartial();
+  f.state.importRevision++;
+  f.state.importPartialTicket=null;
+  await assert.rejects(f.confirmPartial(),/La revisión cambió/);
+  f.render();
+  assert.doesNotMatch(f.preview.innerHTML,/data-action="commit-partial-import"/);
+  assert.equal(f.calls.length,0);
+  const other=fixture({data:partialPreview()});
+  other.openPartial();
+  other.state.user={id:'otra-cuenta'};
+  await assert.rejects(other.confirmPartial(),/La revisión cambió/);
+  assert.equal(other.calls.length,0);
+  const broken=partialPreview();
+  broken.partialImport.indexes=[0,1]; // La segunda fila es un cambio de contacto, no un borrador nuevo.
+  assert.doesNotMatch(fixture({data:broken}).preview.innerHTML,/data-action="commit-partial-import"/);
+});
+
+test('un conflicto al guardar invalida la oferta pero deja disponibles las observaciones',async()=>{
+  const f=fixture({data:partialPreview(),postCommit:()=>{throw Object.assign(new Error('Cambió una ficha'),{status:409});}});
+  f.openPartial();
+  await assert.rejects(f.confirmPartial(),/Cambió una ficha/);
+  assert.equal(f.calls.length,1);
+  assert.equal(f.state.importPartialTicket,null);
+  assert.match(f.preview.innerHTML,/Descargar observaciones/);
+  assert.doesNotMatch(f.preview.innerHTML,/borradores guardados|data-action="commit-partial-import"/);
+});
 
 test('importación muestra 25 filas con sus índices originales y pagina hasta la última',()=>{
   const f=fixture();assert.deepEqual(f.visible(),Array.from({length:25},(_,index)=>index));

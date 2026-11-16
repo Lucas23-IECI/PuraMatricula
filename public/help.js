@@ -241,7 +241,7 @@ const enrollmentHelpTopics={
     ],
     [
       "Confirma solo lo revisado",
-      "Marca cada actualización que quieras aplicar. Las celdas vacías no borran datos; identidad y curso no cambian automáticamente. Los cursos nuevos requieren confirmación y permiso. Ante cambios concurrentes, vuelve a previsualizar.",
+      "Si aparece Guardar filas válidas, puedes crear los borradores nuevos con curso asignado y continuar después con lo pendiente. En un guardado completo, marca cada actualización que quieras aplicar. Ante cambios concurrentes, vuelve a previsualizar.",
       "import"
     ]
   ],
@@ -406,6 +406,12 @@ const enrollmentHelpTopics={
       "Este formulario actúa sobre la pantalla que lo abrió. Cancelar o Escape cierra sin enviarlo. Durante el envío espera su resultado para evitar acciones duplicadas."
     ]
   ],
+  "importPartial": [
+    [
+      "Guardar solo borradores nuevos",
+      "Comprueba el año y cuántas filas quedarían pendientes. Guardar como borradores no cambia fichas existentes ni crea cursos. Puedes cancelar para seguir revisando."
+    ]
+  ],
   "unavailable": [
     [
       "Revisa tu acceso",
@@ -430,7 +436,8 @@ const enrollmentDialogTopics={
   "Editar pregunta": "questionForm",
   "Exportar nómina": "rosterDownload",
   "Descargas de la ficha": "recordDownload",
-  "Recargar ficha guardada": "reload"
+  "Recargar ficha guardada": "reload",
+  "Guardar las filas válidas": "importPartial"
 };
 function enrollmentDialogHelpTopic(title){return /^Revisión \d+$/.test(title)?'revision':enrollmentDialogTopics[title]||'dialog';}
 function enrollmentHelpTopic(trigger){
@@ -471,7 +478,7 @@ const helpTargetSelectors={
   courses:['#courses-list .stat-line || #courses-list || .two-col','#prepare-year','[data-action="new-course"]'],
   users:['[data-action="new-user"]','[data-action="edit-user"] || .table-panel','[data-action="edit-user"] || .table-panel'],
   templates:['#template-name','[data-template="toggle"] || .file-row','#template-preview:not(:empty) || [data-template="preview"]','.file-row'],
-  import:['#import-form [name="file"] || #import-form','#import-config:not(:empty) || #import-form [name="file"]','#import-preview:not(:empty) || #import-form button[type="submit"] || #import-form button','[data-action="commit-import"] || #import-form button[type="submit"] || #import-form button'],
+  import:['#import-form [name="file"] || #import-form','#import-config:not(:empty) || #import-form [name="file"]','#import-preview:not(:empty) || #import-form button[type="submit"] || #import-form button','[data-action="commit-partial-import"] || [data-action="commit-import"] || #import-form button[type="submit"] || #import-form button'],
   audit:['.table-panel tbody tr || .table-panel','.callout'],
   backup:['#backup-form','.callout'],
   empty:['.topbar','.sidebar-foot'],
@@ -491,6 +498,7 @@ const helpTargetSelectors={
   revision:['#dialog .dialog-heading','#dialog [data-action="close-dialog"]'],
   reload:['#dialog .dialog-heading','#dialog [type="submit"]'],
   dialog:['#dialog .dialog-heading','#dialog [type="submit"]'],
+  importPartial:['#dialog [type="submit"]'],
   unavailable:['.topbar']
 };
 let activeHelpTarget=null;
