@@ -279,9 +279,13 @@ try {
                 try {
                     $reader = New-Object IO.StreamReader($reply.GetResponseStream())
                     try { $body = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-                    if (-not $body.ok -or $body.demo -or $body.application -ne 'matricula') { throw 'La dirección configurada no responde como Matricula escolar.' }
+                    if (-not $body.ok -or $body.demo -or $body.application -ne 'matricula') { throw 'La direccion configurada no responde como Matricula escolar.' }
                 } finally { $reply.Dispose() }
-                Write-Host "Matricula responde en $localUrl. Use esa misma dirección desde los computadores autorizados."
+                if ((Get-Setting 'MATRICULA_TRANSPORT' 'local') -eq 'lan') {
+                    Write-Host "Matricula responde en $localUrl. Use esa misma direccion desde los computadores autorizados."
+                } else {
+                    Write-Host "Matricula responde en $localUrl desde este PC."
+                }
             } else { Write-Host 'Salud interna comprobada. Compruebe tambien HTTPS e ingreso desde el PC de Secretaria.' }
         }
         'backup' { Backup-Matricula }

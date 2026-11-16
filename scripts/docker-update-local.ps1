@@ -1,13 +1,15 @@
 [CmdletBinding()]
 param(
     [string]$Destino = 'C:\PuraMatricula',
-    [switch]$SoloComprobar
+    [switch]$SoloComprobar,
+    [string]$CarpetaAccesoDirecto,
+    [switch]$SinAccesoDirecto
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 function Fail([string]$message) { throw $message }
-function Read-Json([string]$path) { Get-Content -LiteralPath $path -Raw | ConvertFrom-Json }
+function Read-Json([string]$path) { Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json }
 function Sha256([string]$path) { (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() }
 function Invoke-Docker([string[]]$Arguments, [switch]$Capture) {
     if ($Capture) { $result=@(& $script:Docker @Arguments); if ($LASTEXITCODE -ne 0) { Fail "Docker terminó con código $LASTEXITCODE." }; return $result }
@@ -34,8 +36,12 @@ function Get-LanAddress {
     if (-not $candidate) { Fail 'No se encontró una dirección IPv4 interna activa.' }
     return [string]$candidate
 }
+function Get-ActiveAddresses {
+    @(Get-NetIPConfiguration | Where-Object { $_.NetAdapter.Status -eq 'Up' } | ForEach-Object { $_.IPv4Address.IPAddress })
+}
 
 try {
+    if (Get-ChildItem Env:MATRICULA_* -ErrorAction SilentlyContinue) { Fail 'Abra una PowerShell nueva, sin variables MATRICULA_ que puedan cambiar la instalacion seleccionada.' }
     if ($Destino -notmatch '^[A-Za-z]:[\\/]') { Fail 'El destino debe ser una carpeta absoluta de un disco local.' }
     $target=[IO.Path]::GetFullPath($Destino)
     if (-not (Test-Path -LiteralPath $target -PathType Container)) { Fail "No existe la instalación: $target" }
@@ -62,25 +68,74 @@ try {
     }
     if(-not $imageIsAllowed){Fail "La versión instalada no corresponde a esta actualización: $oldImage"}
     if((Invoke-Docker @('volume','ls','--format','{{.Name}}') -Capture) -notcontains $volume){Fail "No existe el volumen de datos configurado: $volume"}
-    $project=(Invoke-Docker @('compose','--project-directory',$target,'--env-file',$envPath,'-f',$composePath,'-p','puramatricula','ps','--status','running','--services') -Capture);if($project -notcontains 'puramatricula'){Fail 'Matrícula no está ejecutándose. Inicie primero la instalación y vuelva a intentarlo.'}
+    $containerIds=@(Invoke-Docker @('compose','--project-directory',$target,'--env-file',$envPath,'-f',$composePath,'-p','puramatricula','ps','--status','running','--quiet','puramatricula') -Capture)
+    if($containerIds.Count -ne 1 -or $containerIds[0] -notmatch '^[a-f0-9]{12,64}$'){Fail 'No se encontro un contenedor activo de Matricula. Inicie la instalacion correcta y vuelva a intentarlo.'}
+    $containers=@(Invoke-Docker @('inspect','--type','container',$containerIds[0]) -Capture | Out-String | ConvertFrom-Json)
+    if($containers.Count -ne 1){Fail 'No se pudo identificar el contenedor activo de Matricula.'}
+    $container=$containers[0];$workingDir=$container.Config.Labels.PSObject.Properties['com.docker.compose.project.working_dir']
+    $pathSeparators=[char[]]@('\','/')
+    if(-not $workingDir -or [IO.Path]::GetFullPath([string]$workingDir.Value).TrimEnd($pathSeparators) -ne $target.TrimEnd($pathSeparators)){Fail 'El contenedor activo pertenece a otra carpeta. Use -Destino con la carpeta de la instalacion en ejecucion.'}
+    if($container.Config.Image -cne $oldImage -or -not @($container.Mounts | Where-Object { $_.Type -eq 'volume' -and $_.Destination -ceq '/data' -and $_.Name -ceq $volume }).Count){Fail 'La imagen o el volumen del contenedor activo no coinciden con docker.env. No se hizo ningun cambio.'}
     if($SoloComprobar){Write-Host "Actualización preparada para $target. Conserva puerto $port, volumen $volume e imagen anterior $oldImage.";return}
+    $previousLan=Get-EnvValue $lines 'MATRICULA_LAN_IP'
+    $previousOrigin=Get-EnvValue $lines 'MATRICULA_ORIGIN' ('http://127.0.0.1:'+$port)
+    $existingLan=(Get-EnvValue $lines 'MATRICULA_TRANSPORT' 'local') -eq 'lan'
+    $generatedOrigin=$previousLan -and $previousOrigin -match ('^http://'+[regex]::Escape($previousLan)+':\d{4,5}/?$')
+    $newLan=if(-not $existingLan){Get-LanAddress}
+        elseif($generatedOrigin){if((Get-ActiveAddresses) -contains $previousLan){$previousLan}else{Get-LanAddress}}
     Write-Host 'Se hará un respaldo cifrado antes de cambiar la imagen.';& $assistant backup;if($LASTEXITCODE -ne 0){Fail 'No se pudo crear el respaldo. La imagen no se cambió.'}
     Invoke-Docker @('image','load','--input',$tar);$newIds=@(Invoke-Docker @('image','inspect','--format','{{.Id}}',$release.image) -Capture);$expected=@($release.imageId,$release.imageConfigId)|Where-Object{$_ -and $_ -match '^sha256:[a-f0-9]{64}$'};if($newIds.Count -ne 1 -or ($expected -notcontains $newIds[0])){Fail 'La imagen cargada no coincide con la entrega.'}
-    $oldLines=[string[]]$lines;$backupEnv=Join-Path $target ('.docker.env.before-update-'+[Guid]::NewGuid().ToString('N')+'.txt');[IO.File]::WriteAllLines($backupEnv,$oldLines,(New-Object Text.UTF8Encoding($false)))
+    $oldLines=[string[]]$lines;$backupEnv=Join-Path $target ('.docker.env.before-update-'+[Guid]::NewGuid().ToString('N')+'.txt');Copy-Item -LiteralPath $envPath -Destination $backupEnv
+    $keepRollbackFiles=$false
     $composeTarget=Join-Path $target 'compose.local.yaml';$composePackage=Join-Path $PSScriptRoot 'compose.local.yaml';$composeBackup=$null;$shortcutTarget=Join-Path $target 'scripts\crear-acceso-directo.ps1';$shortcutPackage=Join-Path $PSScriptRoot 'crear-acceso-directo.ps1';$shortcutBackup=$null;$assistantPackage=Join-Path $PSScriptRoot 'docker-colegio.ps1';$assistantBackup=$null
     try{
       $next=Set-EnvValue $oldLines 'MATRICULA_IMAGE' ([string]$release.image)
-      if((Get-EnvValue $oldLines 'MATRICULA_TRANSPORT' 'local') -ne 'lan'){
-        $lan=Get-LanAddress
-        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-        if ($isAdmin) { $ruleName='PuraMatricula - Acceso interno HTTP';if(-not(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)){New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort ([int]$port) -Action Allow -Profile Private | Out-Null} }
-        $next=Set-EnvValue $next 'MATRICULA_TRANSPORT' 'lan';$next=Set-EnvValue $next 'MATRICULA_ALLOW_INSECURE_LAN' '1';$next=Set-EnvValue $next 'MATRICULA_LOCAL_BIND' '0.0.0.0';$next=Set-EnvValue $next 'MATRICULA_LAN_IP' $lan;$next=Set-EnvValue $next 'MATRICULA_ORIGIN' ('http://'+$lan+':'+$port)
+      if(-not $existingLan){
+        $next=Set-EnvValue $next 'MATRICULA_TRANSPORT' 'lan';$next=Set-EnvValue $next 'MATRICULA_ALLOW_INSECURE_LAN' '1';$next=Set-EnvValue $next 'MATRICULA_LOCAL_BIND' '0.0.0.0'
+      }
+      if($newLan){
+        $next=Set-EnvValue $next 'MATRICULA_LAN_IP' $newLan;$next=Set-EnvValue $next 'MATRICULA_ORIGIN' ('http://'+$newLan+':'+$port)
       }
       if(Test-Path -LiteralPath $composePackage -PathType Leaf){$composeBackup=$composeTarget+'.before-update-'+[Guid]::NewGuid().ToString('N');Copy-Item -LiteralPath $composeTarget -Destination $composeBackup -Force;Copy-Item -LiteralPath $composePackage -Destination $composeTarget -Force}
       if((Test-Path -LiteralPath $shortcutPackage -PathType Leaf) -and (Test-Path -LiteralPath $shortcutTarget -PathType Leaf)){$shortcutBackup=$shortcutTarget+'.before-update-'+[Guid]::NewGuid().ToString('N');Copy-Item -LiteralPath $shortcutTarget -Destination $shortcutBackup -Force;Copy-Item -LiteralPath $shortcutPackage -Destination $shortcutTarget -Force}
       if((Test-Path -LiteralPath $assistantPackage -PathType Leaf) -and (Test-Path -LiteralPath $assistant -PathType Leaf)){$assistantBackup=$assistant+'.before-update-'+[Guid]::NewGuid().ToString('N');Copy-Item -LiteralPath $assistant -Destination $assistantBackup -Force;Copy-Item -LiteralPath $assistantPackage -Destination $assistant -Force}
-      $temporary=$envPath+'.partial-'+[Guid]::NewGuid().ToString('N');[IO.File]::WriteAllLines($temporary,$next,(New-Object Text.UTF8Encoding($false)));Move-Item -LiteralPath $temporary -Destination $envPath -Force;& $assistant start;if($LASTEXITCODE -ne 0){Fail 'La nueva imagen no pudo iniciar.'};& $assistant check;if($LASTEXITCODE -ne 0){Fail 'La nueva imagen no superó la comprobación de salud.'};Remove-Item -LiteralPath $backupEnv -Force;Write-Host "Actualización lista. Se conservó el puerto $port y el volumen $volume. Acceso interno: $($next | Where-Object {$_ -like 'MATRICULA_ORIGIN=*'} | Select-Object -First 1)."
+      $temporary=$envPath+'.partial-'+[Guid]::NewGuid().ToString('N');[IO.File]::WriteAllLines($temporary,$next,(New-Object Text.UTF8Encoding($false)));Move-Item -LiteralPath $temporary -Destination $envPath -Force;& $assistant start;if($LASTEXITCODE -ne 0){Fail 'La nueva imagen no pudo iniciar.'};& $assistant check;if($LASTEXITCODE -ne 0){Fail 'La nueva imagen no superó la comprobación de salud.'}
     }
-    catch{Write-Warning 'La actualización no superó la comprobación. Se restaura la configuración anterior; el volumen no se toca.';[IO.File]::WriteAllLines($envPath,$oldLines,(New-Object Text.UTF8Encoding($false)));if($composeBackup -and (Test-Path -LiteralPath $composeBackup)){Copy-Item -LiteralPath $composeBackup -Destination $composeTarget -Force};if($shortcutBackup -and (Test-Path -LiteralPath $shortcutBackup)){Copy-Item -LiteralPath $shortcutBackup -Destination $shortcutTarget -Force};if($assistantBackup -and (Test-Path -LiteralPath $assistantBackup)){Copy-Item -LiteralPath $assistantBackup -Destination $assistant -Force};& $assistant start | Out-Host;throw}
-    finally{if(Test-Path -LiteralPath $backupEnv){Remove-Item -LiteralPath $backupEnv -Force -ErrorAction SilentlyContinue};if($composeBackup -and (Test-Path -LiteralPath $composeBackup)){Remove-Item -LiteralPath $composeBackup -Force -ErrorAction SilentlyContinue};if($shortcutBackup -and (Test-Path -LiteralPath $shortcutBackup)){Remove-Item -LiteralPath $shortcutBackup -Force -ErrorAction SilentlyContinue};if($assistantBackup -and (Test-Path -LiteralPath $assistantBackup)){Remove-Item -LiteralPath $assistantBackup -Force -ErrorAction SilentlyContinue}}
+    catch{
+      $failure=$_
+      $keepRollbackFiles=$true
+      Write-Warning 'No se pudo completar la actualizacion. Se restaurara la configuracion anterior sin borrar el volumen.'
+      Copy-Item -LiteralPath $backupEnv -Destination $envPath -Force
+      if($composeBackup -and (Test-Path -LiteralPath $composeBackup)){Copy-Item -LiteralPath $composeBackup -Destination $composeTarget -Force}
+      if($shortcutBackup -and (Test-Path -LiteralPath $shortcutBackup)){Copy-Item -LiteralPath $shortcutBackup -Destination $shortcutTarget -Force}
+      if($assistantBackup -and (Test-Path -LiteralPath $assistantBackup)){Copy-Item -LiteralPath $assistantBackup -Destination $assistant -Force}
+      & $assistant start | Out-Host
+      if($LASTEXITCODE -ne 0){Fail "No pudo arrancar la imagen anterior. Se conservaron el volumen, el respaldo cifrado y la copia de configuracion: $backupEnv"}
+      $keepRollbackFiles=$false
+      throw $failure
+    }
+    finally{
+      if(-not $keepRollbackFiles){
+        foreach($saved in @($backupEnv,$composeBackup,$shortcutBackup,$assistantBackup)){
+          if($saved -and (Test-Path -LiteralPath $saved)){Remove-Item -LiteralPath $saved -Force -ErrorAction SilentlyContinue}
+        }
+      }
+    }
+    $origin=Get-EnvValue $next 'MATRICULA_ORIGIN'
+    Write-Host "Actualización lista. Se conservó el puerto $port y el volumen $volume. Acceso interno: $origin/"
+    try {
+      $isAdmin=([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+      if($isAdmin){
+        $ruleName="PuraMatricula-LAN-$port"
+        if(-not(Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue)){New-NetFirewallRule -Name $ruleName -DisplayName "PuraMatricula - Red privada ($port)" -Direction Inbound -Protocol TCP -LocalPort ([int]$port) -RemoteAddress LocalSubnet -Action Allow -Profile Private | Out-Null}
+      } else {Write-Warning "Si otro equipo no puede entrar, Informática puede habilitar el puerto $port en la red privada."}
+    } catch {Write-Warning "No se pudo configurar el firewall. Informática puede revisar el puerto $port."}
+    if(-not $SinAccesoDirecto){
+      try {
+        $shortcutArgs=@{OrigenAnterior=$previousOrigin}
+        if($CarpetaAccesoDirecto){$shortcutArgs.Carpeta=$CarpetaAccesoDirecto}
+        $shortcut=& $shortcutTarget @shortcutArgs
+        Write-Host "Acceso directo actualizado: $shortcut"
+      } catch {Write-Warning "La aplicacion funciona en $origin/. No se pudo actualizar el acceso directo de este escritorio."}
+    }
 }catch{Write-Error $_.Exception.Message;exit 1}

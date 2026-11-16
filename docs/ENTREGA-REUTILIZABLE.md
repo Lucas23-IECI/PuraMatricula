@@ -7,9 +7,9 @@
 3. Haga doble clic en **INSTALAR MATRICULA.cmd** desde la carpeta extraída. Cree la primera cuenta administradora cuando se lo pida.
 4. Abra el acceso del escritorio. La dirección interna queda escrita en `docker.env` como `MATRICULA_ORIGIN` y se muestra al terminar la instalación.
 
-La imagen va dentro del ZIP. El servidor no necesita clonar el repositorio, instalar Node ni compilar. La base empieza vacía. Este modo solo se usa desde el PC servidor; para acceso de red, consulte [Docker y HTTPS](DOCKER-COLEGIO.md). Si ya hay una instalación, conserve su volumen y siga el procedimiento de actualización.
+La imagen va dentro del ZIP. El servidor no necesita clonar el repositorio, instalar Node ni compilar. La base empieza vacía. El instalador de Windows configura el acceso por la IPv4 interna del servidor. Compruebe esa dirección desde otro equipo de la red del colegio después de instalar. Si ya hay una instalación, conserve su volumen y use el actualizador.
 
-Para una instalación existente, la entrega incluye **ACTUALIZAR MATRICULA.cmd**. Ese recorrido conserva el puerto y el volumen, crea un respaldo cifrado con el asistente instalado y cambia solamente la imagen de esta entrega. El actualizador está limitado a saltos de imagen sin migraciones de base declaradas. Si el servicio no supera la comprobación, restaura el `docker.env` anterior y vuelve a iniciar la imagen anterior; el volumen nunca se borra.
+Para una instalación existente, la entrega incluye **ACTUALIZAR MATRICULA.cmd**. Comprueba que el contenedor corresponda a la carpeta, imagen y volumen configurados, crea un respaldo cifrado y conserva el puerto y el volumen. El actualizador está limitado a saltos de imagen sin migraciones de base declaradas. Si el servicio no supera la comprobación, restaura los archivos anteriores e intenta volver a iniciar la imagen anterior. El volumen y el respaldo cifrado se conservan.
 
 ## Preparar y publicar otra versión
 

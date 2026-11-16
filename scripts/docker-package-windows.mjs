@@ -10,6 +10,11 @@ const root=dirname(dirname(fileURLToPath(import.meta.url)));
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const run=(command,args)=>execFileSync(command,args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','inherit']}).trim();
 const write=(path,bytes)=>writeFileSync(path,bytes,{flag:'wx'});
+const windowsPowerShell=bytes=>{
+  const source=Buffer.from(bytes);
+  const bom=Buffer.from([0xef,0xbb,0xbf]);
+  return source.subarray(0,bom.length).equals(bom)?source:Buffer.concat([bom,source]);
+};
 
 function build(){
   if(process.argv.length!==2)throw Error('Uso: npm run release:windows');
@@ -53,11 +58,11 @@ function build(){
     'INSTALAR MATRICULA.cmd':Buffer.from(launcher,'ascii'),
     'ACTUALIZAR MATRICULA.cmd':Buffer.from(Buffer.from(sourceFiles['scripts/actualizar-matricula.cmd']).toString('ascii').replace(/\r?\n/g,'\r\n'),'ascii'),
     'ABRIR-PRIMERO.md':Buffer.from(guide+`\nFuente de esta entrega: ${commit}\n`),
-    'INICIAR-EN-EL-SERVIDOR.ps1':sourceFiles['scripts/docker-install-local.ps1'],
-    'ACTUALIZAR-EN-EL-SERVIDOR.ps1':sourceFiles['scripts/docker-update-local.ps1'],
+    'INICIAR-EN-EL-SERVIDOR.ps1':windowsPowerShell(sourceFiles['scripts/docker-install-local.ps1']),
+    'ACTUALIZAR-EN-EL-SERVIDOR.ps1':windowsPowerShell(sourceFiles['scripts/docker-update-local.ps1']),
     'compose.local.yaml':sourceFiles['compose.local.yaml'],
-    'crear-acceso-directo.ps1':sourceFiles['scripts/crear-acceso-directo.ps1'],
-    'docker-colegio.ps1':sourceFiles['scripts/docker-colegio.ps1'],
+    'crear-acceso-directo.ps1':windowsPowerShell(sourceFiles['scripts/crear-acceso-directo.ps1']),
+    'docker-colegio.ps1':windowsPowerShell(sourceFiles['scripts/docker-colegio.ps1']),
     'docker.local.env':config,
     'ENTREGA.json':Buffer.from(JSON.stringify(metadata,null,2)+'\n'),
     [zipName]:sourceBytes,

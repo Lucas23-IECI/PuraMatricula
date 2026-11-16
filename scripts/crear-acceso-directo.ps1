@@ -3,7 +3,8 @@ param(
     [string]$Carpeta = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory),
     [ValidateRange(0, 65535)]
     [int]$Puerto = 0,
-    [switch]$UsarIP
+    [switch]$UsarIP,
+    [string]$OrigenAnterior
 )
 
 Set-StrictMode -Version Latest
@@ -33,28 +34,91 @@ if ([string]::IsNullOrWhiteSpace($Carpeta) -or -not [IO.Directory]::Exists($Carp
 $icono = Join-Path $instalacion 'public\escudo.ico'
 if (-not [IO.File]::Exists($icono)) { throw 'No se encontro el escudo de la instalacion.' }
 if ($icono -match '[\x00-\x1f\x7f]') { throw 'La ruta del icono no se puede usar en el acceso directo.' }
-$originLine = $configLines | Where-Object { $_ -match '^\s*MATRICULA_ORIGIN\s*=' } | Select-Object -Last 1
-$direccion = if (-not $UsarIP -and $originLine -and $originLine -match '^\s*MATRICULA_ORIGIN\s*=\s*(https?://[^\s#]+)\s*(?:#.*)?$') { $Matches[1].TrimEnd('/') + '/' } else {
-    $lanLine = $configLines | Where-Object { $_ -match '^\s*MATRICULA_LAN_IP\s*=' } | Select-Object -Last 1
-    $servidor = if ($UsarIP -or -not $lanLine) { '127.0.0.1' } else { ($lanLine -split '=',2)[1].Trim() }
-    'http://{0}:{1}/' -f $servidor, $Puerto
+function Get-Setting([string]$Name) {
+    $line = $configLines | Where-Object { $_ -match ('^\s*' + $Name + '\s*=') } | Select-Object -Last 1
+    if ($line -and $line -match '^\s*\w+\s*=\s*([^#]*?)(?:\s+#.*)?\s*$') {
+        return $Matches[1].Trim().Trim([char[]]@("'", '"'))
+    }
 }
-$contenido = @('[InternetShortcut]', "URL=$direccion", "IconFile=$icono", 'IconIndex=0', '') -join [Environment]::NewLine
-$encoding = [Text.UnicodeEncoding]::new($false, $true)
-[byte[]]$bytes = $encoding.GetPreamble() + $encoding.GetBytes($contenido)
 
-# Do not replace another shortcut or follow a pre-existing reparse point.
+function Format-Origin([string]$Value) {
+    $uri = $null
+    if ($Value -match '^https?://[^\s#]+$' -and [Uri]::TryCreate($Value, [UriKind]::Absolute, [ref]$uri) -and
+        -not $uri.UserInfo -and $uri.AbsolutePath -eq '/' -and -not $uri.Query) {
+        return $uri.GetLeftPart([UriPartial]::Authority) + '/'
+    }
+}
+
+$lan = Get-Setting 'MATRICULA_LAN_IP'
+$ip = $null
+$servidor = if ($lan -match '^\d{1,3}(?:\.\d{1,3}){3}$' -and [Net.IPAddress]::TryParse($lan, [ref]$ip)) { $ip.ToString() } else { '127.0.0.1' }
+$direccion = if (-not $UsarIP) { Format-Origin (Get-Setting 'MATRICULA_ORIGIN') }
+if (-not $direccion) { $direccion = 'http://{0}:{1}/' -f $servidor, $Puerto }
+
+$encoding = [Text.UnicodeEncoding]::new($false, $true)
+function Get-ShortcutBytes([string]$Address) {
+    $body = @('[InternetShortcut]', "URL=$Address", "IconFile=$icono", 'IconIndex=0', '') -join [Environment]::NewLine
+    $encoding.GetPreamble() + $encoding.GetBytes($body)
+}
+
+[byte[]]$bytes = Get-ShortcutBytes $direccion
+$actual = [Convert]::ToBase64String($bytes)
+$anterior = Format-Origin $OrigenAnterior
+$propiosAnteriores = @()
+if ($anterior) {
+    $propiosAnteriores += [Convert]::ToBase64String([byte[]](Get-ShortcutBytes $anterior))
+    $anteriorUri = [Uri]$anterior
+    if ($anteriorUri.Scheme -eq 'http' -and $anteriorUri.Port -eq $Puerto) {
+        # The first LAN upgrade did not replace shortcuts from the loopback installation.
+        $propiosAnteriores += [Convert]::ToBase64String([byte[]](Get-ShortcutBytes ('http://matricula.localhost:{0}/' -f $Puerto)))
+        $propiosAnteriores += [Convert]::ToBase64String([byte[]](Get-ShortcutBytes ('http://127.0.0.1:{0}/' -f $Puerto)))
+    }
+}
+
+function Read-OwnedCandidate([string]$Path) {
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or
+        ($item.Attributes -band ([IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint)) -or
+        $item.Length -gt 4096) { return }
+    try { [Convert]::ToBase64String([IO.File]::ReadAllBytes($Path)) }
+    catch [IO.IOException] { }
+    catch [UnauthorizedAccessException] { }
+}
+
+function Update-OwnedShortcut([string]$Path, [string]$Expected) {
+    $temporary = Join-Path $Carpeta ('.matricula-acceso-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    $created = $false
+    try {
+        $stream = [IO.File]::Open($temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $created = $true
+        try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+        if ((Read-OwnedCandidate $Path) -cne $Expected) { return $false }
+        [IO.File]::Replace($temporary, $Path, [NullString]::Value)
+        return $true
+    } catch [IO.IOException] { return $false }
+      catch [UnauthorizedAccessException] { return $false }
+    finally { if ($created) { [IO.File]::Delete($temporary) } }
+}
+
+# Check all numbered names first so a gap does not leave an obsolete shortcut behind.
+$disponibles = @()
+$resultado = $null
 for ($i = 1; $i -le 30; $i++) {
     $nombre = if ($i -eq 1) { 'Matricula del colegio.url' } else { "Matricula del colegio ($i).url" }
     $archivo = Join-Path $Carpeta $nombre
     $existente = Get-Item -LiteralPath $archivo -Force -ErrorAction SilentlyContinue
-    if ($null -ne $existente) {
-        if (-not ($existente.Attributes -band ([IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint)) -and
-            $existente.Length -eq $bytes.Length -and [IO.File]::ReadAllText($archivo) -ceq $contenido) {
-            return $archivo
-        }
+    if ($null -eq $existente) {
+        $disponibles += $archivo
         continue
     }
+    $candidato = Read-OwnedCandidate $archivo
+    if ($candidato -ceq $actual -or
+        ($propiosAnteriores -ccontains $candidato -and (Update-OwnedShortcut $archivo $candidato))) {
+        if (-not $resultado) { $resultado = $archivo }
+    }
+}
+if ($resultado) { return $resultado }
+foreach ($archivo in $disponibles) {
     try {
         $stream = [IO.File]::Open($archivo, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     } catch [IO.IOException] {

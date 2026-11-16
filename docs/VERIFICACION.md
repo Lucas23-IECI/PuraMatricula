@@ -1,5 +1,14 @@
 # Verificación de PuraMatricula
 
+## Reprueba de la entrega Windows · 16 de noviembre de 2026
+
+- El ZIP publicado `v0.2.0-colegio.5` se descargó y su SHA-256 coincidió. Se ejecutó su actualizador con Windows PowerShell 5.1 y Docker Desktop sobre una copia sintética que usaba la etiqueta exacta que Andrés reportó. Creó un respaldo cifrado, pasó a la IPv4 interna y conservó el puerto y el volumen. Esa entrega aún tiene dos defectos: el instalador nuevo escribe las opciones LAN en una sola línea y el actualizador no renueva el acceso directo antiguo.
+- Se corrigieron ambos defectos localmente. Se probó una instalación nueva desde un ZIP de QA con el runtime publicado, un puerto y un volumen de prueba. Windows rechazó un usuario con `#` y una contraseña corta, admitió corregir ambas entradas en la misma ejecución, arrancó por IP, creó un administrador temporal y mantuvo vacía la lista de alumnos tras cambiar la clave. El acceso directo con escudo se verificó en un escritorio ficticio.
+- En una actualización con la corrección se indujo un fallo después de arrancar la imagen nueva. Se recuperaron los archivos originales byte por byte y la imagen anterior volvió sana con el mismo volumen. Se restauró el respaldo en una ubicación separada y recuperó una ficha y su adjunto. Al repetir con éxito, la cuenta, ficha, revisión, adjunto y puerto existentes se conservaron.
+- Chrome en segundo plano usó datos sintéticos. Un Excel de 390 filas produjo 323 candidatas y 67 bloqueos. Confirmar un IPE resolvió una fila; crear el curso pendiente guardó cero alumnos; otro Excel con filas válidas creó dos borradores. Se verificaron además edición, filtros, exportaciones, cuentas, navegación, ayuda y skeletons. La suite de Node pasó 337 pruebas; los logs están en `.local/browser-retest-20261116/` y `.local/retest-final-suite-20261116.log`.
+
+La prueba de acceso se hizo desde el host por su IPv4, también después de reiniciar el contenedor. Falta verificar desde otro equipo de la red del colegio y tras reiniciar el servidor de Andrés. No se usó el padrón real ni se modificó Atrasos.
+
 ## Entrada local y escritorio · 9 de noviembre de 2026
 
 La entrega interna usa la IPv4 que detecta el instalador en el PC servidor. Esa dirección se conserva en `MATRICULA_ORIGIN` y se valida como host autorizado.
@@ -10,7 +19,7 @@ El instalador crea un acceso directo con el escudo en el escritorio de la cuenta
 
 Cierre de esta revisión: **319 pruebas aprobadas, sin fallos ni omisiones**, y `npm run build` aprobado. En Chromium por terminal se comprobaron ambos accesos locales, la descarga del ZIP y del escudo, primer ingreso y cambio obligatorio de clave, persistencia de la sesión al recargar, base sin estudiantes, recuerdo y vencimiento del usuario, y tamaños de 390 y 1440 px. No hubo errores JavaScript; las respuestas 401 de `/api/session` antes de ingresar o después de salir son las esperadas.
 
-La prueba Docker local aislada incorporó 14 estudiantes sintéticos, edición, PDF, adjunto, respaldo cifrado, restauración y reinicio. Estas comprobaciones no sustituyen probar el instalador en el servidor físico del colegio. Sin certificado, este perfil solo admite el mismo PC; Docker Desktop debe estar iniciado después de reiniciar Windows.
+La prueba Docker local aislada incorporó 14 estudiantes sintéticos, edición, PDF, adjunto, respaldo cifrado, restauración y reinicio. Estas comprobaciones no sustituyen probar el instalador en el servidor físico del colegio. La entrega Windows sin certificado publica la IPv4 privada detectada para la red interna; el acceso desde un segundo PC, el firewall y el arranque de Docker Desktop después de reiniciar Windows todavía deben comprobarse en el servidor del colegio.
 
 El ZIP completo se extrajo en una carpeta nueva y el instalador se ejecutó realmente con Docker Desktop: verificó hashes, cargó la imagen, solicitó la cuenta en terminal, inicializó y comprobó el servicio. Ese mismo servicio pasó el recorrido de ingreso y escritorio en Chromium. Solo se cambiaron el puerto y los nombres del volumen/red para aislar QA. No se creó ningún acceso en el escritorio personal.
 

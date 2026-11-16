@@ -51,10 +51,11 @@ try {
     $volumes = @(& $docker volume ls --format '{{.Name}}')
     if ($LASTEXITCODE -ne 0) { throw 'No fue posible consultar los volumenes Docker.' }
     if ($volumes -contains 'puramatricula_data') { throw 'Ya existe puramatricula_data. Conserve la base y siga la guia de actualizacion; no inicialice de nuevo.' }
-    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $Puerto)
+    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, $Puerto)
     try { $listener.ExclusiveAddressUse = $true; $listener.Start() }
     catch { throw "El puerto local $Puerto no se pudo reservar. Elija otro con -Puerto 4320." }
     finally { $listener.Stop() }
+    $lanAddress = Get-LanAddress
 
     & $docker image load --input $tar
     if ($LASTEXITCODE -ne 0) { throw 'Docker no pudo cargar la imagen.' }
@@ -62,25 +63,19 @@ try {
     if ($LASTEXITCODE -ne 0 -or $imageIds -cnotcontains $id) { throw 'La imagen cargada no coincide con la entrega.' }
 
     Expand-Archive -LiteralPath $zip -DestinationPath $target
-    $lanAddress = Get-LanAddress
-    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    if ($isAdmin) {
-        $ruleName = 'PuraMatricula - Acceso interno HTTP'
-        if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort $Puerto -Action Allow -Profile Private | Out-Null }
-    } else { Write-Warning 'PowerShell no tiene permisos de administrador. El acceso desde otros computadores puede requerir que Informática permita este puerto en la red privada.' }
+    $newline = [Environment]::NewLine
     $envText = (Get-Content -LiteralPath $config -Raw).Replace('MATRICULA_LOCAL_PORT=4319','MATRICULA_LOCAL_PORT='+$Puerto)
-    $envText = $envText.TrimEnd([char[]]@(13,10)) + [Environment]::NewLine + @(
+    $lanSettings = @(
         'MATRICULA_TRANSPORT=lan'
         'MATRICULA_ALLOW_INSECURE_LAN=1'
         'MATRICULA_LOCAL_BIND=0.0.0.0'
         ('MATRICULA_LAN_IP=' + $lanAddress)
         ('MATRICULA_ORIGIN=http://' + $lanAddress + ':' + $Puerto)
-    ) -join [Environment]::NewLine
-    $envText += [Environment]::NewLine
+    ) -join $newline
+    $envText = $envText.TrimEnd([char[]]@(13,10)) + $newline + $lanSettings + $newline
     $iconPath = Join-Path $target 'public\escudo.ico'
     if ($iconPath -match '^[A-Za-z]:\\[^''\x00-\x1f\x7f]+$' -and (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
-        $newline = [Environment]::NewLine
-        $envText = $envText.TrimEnd([char[]]@(13, 10)) + $newline + "MATRICULA_DESKTOP_ICON='$iconPath'" + $newline
+        $envText += "MATRICULA_DESKTOP_ICON='$iconPath'" + $newline
     }
     [IO.File]::WriteAllText((Join-Path $target 'docker.env'), $envText, (New-Object Text.UTF8Encoding($false)))
     Write-Host "Archivos preparados en $target"
@@ -93,6 +88,15 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'La inicializacion no termino. Consulte ABRIR-PRIMERO.md antes de repetirla.' }
     & $assistant check
     if ($LASTEXITCODE -ne 0) { throw 'El asistente no pudo confirmar el acceso.' }
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($isAdmin) {
+        try {
+            $ruleName = "PuraMatricula-LAN-$Puerto"
+            if (-not (Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue)) {
+                New-NetFirewallRule -Name $ruleName -DisplayName "PuraMatricula - Acceso interno HTTP ($Puerto)" -Direction Inbound -Protocol TCP -LocalPort $Puerto -RemoteAddress LocalSubnet -Action Allow -Profile Private | Out-Null
+            }
+        } catch { Write-Warning "No se pudo configurar el firewall. Informatica puede habilitar el puerto $Puerto para la subred autorizada." }
+    } else { Write-Warning "Informatica puede tener que habilitar el puerto $Puerto para la subred autorizada." }
     if (-not $SinAccesoDirecto) {
         try {
             $shortcut = & (Join-Path $target 'scripts\crear-acceso-directo.ps1') -Puerto $Puerto

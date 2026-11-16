@@ -69,12 +69,14 @@ La opción de imagen local corresponde solo a `init`. `update` conserva su proce
 
 ## Primer día sin certificado: modo local
 
+Para la entrega de un clic en Windows, siga [Abrir primero](ABRIR-PRIMERO-WINDOWS.md): el instalador prepara el acceso por IPv4 interna. El asistente manual puede usar esa misma configuración; si se inicializa manualmente sin la configuración LAN del instalador, permite entrar solo desde el servidor.
+
 Use la entrega que incluye `compose.local.yaml`. En el servidor, con Docker Engine **28 o posterior** y el motor Linux local, compruebe los hashes, importe la imagen y extraiga las fuentes en una carpeta nueva. Copie el archivo de configuración local de la entrega como `docker.env` para conservar la etiqueta fechada exacta.
 
     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\docker-colegio.ps1 init -Mode local -UseImage
     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\docker-colegio.ps1 check
 
-Abra la dirección IPv4 interna que muestra el instalador, por ejemplo `http://192.168.1.25:4319/`. Esa misma dirección se usa desde los computadores autorizados y llega al mismo servicio y la misma base. El asistente pide el nombre de usuario y una clave temporal oculta. Al entrar, cámbiela y cree las cuentas individuales que usarán Matrícula. Si ya se inicializó la base, utilice `start` y `check`, en vez de repetir `init`. Si el puerto está ocupado, cambie `MATRICULA_LOCAL_PORT` a otro puerto libre y utilice esa misma dirección; si la base ya se inicializó, utilice `start`.
+Abra la dirección IPv4 interna que muestra el instalador, por ejemplo `http://192.168.1.25:4319/`. Esa misma dirección se usa desde los computadores autorizados. El asistente pide el nombre de usuario y una clave temporal oculta. Al entrar, cámbiela y cree las cuentas individuales que usarán Matrícula. Si ya se inicializó la base, utilice `start` y `check`, en vez de repetir `init`. Si Informática decide cambiar el puerto de una instalación LAN, cambie `MATRICULA_LOCAL_PORT` y el puerto de `MATRICULA_ORIGIN` en `docker.env`, habilite el nuevo puerto en la red autorizada, luego ejecute `start` y `check`. Vuelva a generar el acceso directo si cambió la dirección y reserve una IPv4 estable en el servidor para evitar cambios por DHCP.
 
 El instalador deja un acceso directo con el escudo en el escritorio de la cuenta de Windows que lo ejecuta. Para otra cuenta del mismo PC, la persona puede descargar desde el ingreso un ZIP con el acceso directo, extraerlo y moverlo a su escritorio. También puede ejecutar `scripts\crear-acceso-directo.ps1` desde su cuenta; la opción `-UsarIP` crea el acceso con la dirección alternativa. No se instalan aplicaciones en el navegador ni se modifica DNS.
 

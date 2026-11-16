@@ -8,7 +8,7 @@ import {createHash} from 'node:crypto';
 import {createServer} from 'node:net';
 import {zipSync} from 'fflate';
 
-test('instalador acepta manifest o config de la misma imagen y rechaza otra identidad antes de extraer',async t=>{
+test('instalador verifica imagen y prepara un docker.env LAN válido con el puerto elegido',async t=>{
   if(process.platform!=='win32'){t.skip('Instalador requiere Windows PowerShell.');return;}
   const root=mkdtempSync(join(tmpdir(),'matricula-installer-'));
   t.after(()=>{assert.ok(resolve(root).startsWith(resolve(tmpdir())+sep));rmSync(root,{recursive:true,force:true});});
@@ -33,21 +33,45 @@ switch ($DockerArgs[0]) {
   const manifestId='sha256:'+'a'.repeat(64),configId='sha256:'+'b'.repeat(64);
   const metadata={mode:'local',image:'puramatricula:0.2.0-local-20261109t120000000z',imageId:manifestId,imageConfigId:configId,zip:'source.zip',zipSha256:digest(source),tar:'image.tar',tarSha256:digest(tar),configSha256:digest(config)};
   copyFileSync(new URL('../scripts/docker-install-local.ps1',import.meta.url),join(root,'install.ps1'));
+  const lanIp='192.168.51.24';
+  writeFileSync(join(root,'run.ps1'),`param([string]$Destination,[int]$Port)
+$global:LASTEXITCODE=0
+function Get-NetIPConfiguration {
+  [pscustomobject]@{
+    NetAdapter = [pscustomobject]@{Status='Up'}
+    IPv4DefaultGateway = [pscustomobject]@{NextHop='192.168.51.1'}
+    IPv4Address = [pscustomobject]@{IPAddress='${lanIp}'}
+  }
+}
+function Get-NetFirewallRule { throw 'SoloPreparar no debe consultar el firewall.' }
+function New-NetFirewallRule { throw 'SoloPreparar no debe modificar el firewall.' }
+& (Join-Path $PSScriptRoot 'install.ps1') -Destino $Destination -Puerto $Port -SoloPreparar
+exit $LASTEXITCODE
+`);
   writeFileSync(join(root,'source.zip'),source);writeFileSync(join(root,'image.tar'),tar);writeFileSync(join(root,'docker.local.env'),config);
   writeFileSync(join(root,'ENTREGA.json'),JSON.stringify(metadata));
-  const listener=createServer();await new Promise(resolve=>listener.listen(0,'127.0.0.1',resolve));
+  const listener=createServer();await new Promise(resolve=>listener.listen(0,'0.0.0.0',resolve));
   const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
   for(const [name,id,accepted] of [['manifest',manifestId,true],['config',configId,true],['unknown','sha256:'+'c'.repeat(64),false]]){
     const destination=join(root,'installed-'+name);
-    const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!/^MATRICULA_|^PATH$/i.test(key)));
+    const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!/^(?:MATRICULA_|DOCKER_HOST$|DOCKER_CONTEXT$|PATH$)/i.test(key)));
     env.Path=tools+';'+process.env.Path;env.PURA_INSTALLER_IMAGE_ID=id;
     // A host running PowerShell 7 can pass its incompatible module directory
     // to Windows PowerShell 5.1. Use only the latter's built-in modules here.
     env.PSModulePath=join(process.env.SystemRoot,'System32','WindowsPowerShell','v1.0','Modules');
-    const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',join(root,'install.ps1'),'-Destino',destination,'-Puerto',String(port),'-SoloPreparar'],{encoding:'utf8',env,timeout:30000});
+    const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',join(root,'run.ps1'),'-Destination',destination,'-Port',String(port)],{encoding:'utf8',env,timeout:30000});
     if(accepted){
       assert.equal(result.status,0,result.stderr);assert.ok(existsSync(join(destination,'README.md')));
-      assert.match(readFileSync(join(destination,'docker.env'),'utf8'),new RegExp('MATRICULA_LOCAL_PORT='+port));
+      const lines=readFileSync(join(destination,'docker.env'),'utf8').trimEnd().split(/\r?\n/);
+      assert.deepEqual(lines.slice(0,7),[
+        'MATRICULA_DOCKER_MODE=local',
+        `MATRICULA_LOCAL_PORT=${port}`,
+        'MATRICULA_TRANSPORT=lan',
+        'MATRICULA_ALLOW_INSECURE_LAN=1',
+        'MATRICULA_LOCAL_BIND=0.0.0.0',
+        `MATRICULA_LAN_IP=${lanIp}`,
+        `MATRICULA_ORIGIN=http://${lanIp}:${port}`
+      ]);
     }else{
       assert.notEqual(result.status,0);assert.match(result.stderr,/imagen cargada no coincide/);assert.equal(existsSync(destination),false);
     }
